@@ -1,0 +1,31 @@
+#
+# zed-csharp
+#
+
+grammars/
+*.wasm
+
+#
+# Rust
+#
+
+/target
+proxy/target/
+**/target/
+**/*.rs.bk
+Cargo.lock
+
+#
+# macOS
+#
+
+.DS_Store
+.AppleDouble
+.LSOverride
+*.sh
+
+#
+# Test projects
+#
+
+test_project/

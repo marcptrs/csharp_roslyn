@@ -1,0 +1,24 @@
+id = "csharp_roslyn"
+name = "C# (Roslyn)"
+description = "C# support via Roslyn Language Server & netcoredbg"
+version = "0.0.1"
+schema_version = 1
+authors = ["Marc Peters <marc@peters.casa>"]
+repository = "https://github.com/marcptrs/csharp-roslyn"
+
+[language_servers.roslyn]
+name = "Roslyn"
+language = "CSharp"
+
+[debug_adapters.netcoredbg]
+
+[debug_locators.dotnet]
+
+[[capabilities]]
+kind = "process:exec"
+command = "find"
+args = ["**"]
+
+[grammars.c_sharp]
+repository = "https://github.com/tree-sitter/tree-sitter-c-sharp"
+rev = "6303e406f61d8bac254da178963a8f2f3041ad87"
