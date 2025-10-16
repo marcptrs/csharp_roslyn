@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use zed_extension_api::{self as zed, Command, Result, Worktree};
 
-const NETCOREDBG_VERSION: &str = "v3.1.2-1054-arm64";
+const NETCOREDBG_VERSION: &str = "v3.1.2-1054";
 const NETCOREDBG_REPO: &str = "https://github.com/marcptrs/netcoredbg";
 
 pub fn ensure_debugger(_worktree: &Worktree) -> Result<Command> {
@@ -63,7 +63,18 @@ fn get_platform_suffix() -> Result<String> {
 
 fn download_and_extract_debugger(cache_dir: &Path) -> Result<()> {
     let platform = get_platform_suffix()?;
-    let archive_name = format!("netcoredbg-{}.tar.gz", platform);
+    let is_windows = cfg!(target_os = "windows");
+    let (archive_name, file_type) = if is_windows {
+        (
+            format!("netcoredbg-{}.zip", platform),
+            zed::DownloadedFileType::Zip,
+        )
+    } else {
+        (
+            format!("netcoredbg-{}.tar.gz", platform),
+            zed::DownloadedFileType::GzipTar,
+        )
+    };
     let download_url = format!(
         "{}/releases/download/{}/{}",
         NETCOREDBG_REPO, NETCOREDBG_VERSION, archive_name
@@ -72,12 +83,8 @@ fn download_and_extract_debugger(cache_dir: &Path) -> Result<()> {
     eprintln!("Attempting to download netcoredbg from: {}", download_url);
 
     let cache_dir_str = cache_dir.to_string_lossy().to_string();
-    zed::download_file(
-        &download_url,
-        &cache_dir_str,
-        zed::DownloadedFileType::GzipTar,
-    )
-    .map_err(|e| format!("Failed to download netcoredbg from {}: {e}", download_url))?;
+    zed::download_file(&download_url, &cache_dir_str, file_type)
+        .map_err(|e| format!("Failed to download netcoredbg from {}: {e}", download_url))?;
 
     let debugger_binary = cache_dir
         .join("netcoredbg")
