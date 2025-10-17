@@ -32,8 +32,10 @@ impl DocumentLifecycleMiddleware {
     }
 
     fn create_did_open_notification(&self, uri: &str) -> Option<Message> {
-        let uri_path = uri.strip_prefix("file://")?;
-        let content = std::fs::read_to_string(uri_path).ok()?;
+        // Parse the URI and convert to file path properly (handles Windows paths)
+        let parsed_uri = lsp_types::Url::parse(uri).ok()?;
+        let uri_path = parsed_uri.to_file_path().ok()?;
+        let content = std::fs::read_to_string(&uri_path).ok()?;
         
         let language_id = if uri.ends_with(".cs") {
             "csharp"
@@ -43,7 +45,7 @@ impl DocumentLifecycleMiddleware {
 
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
-                uri: lsp_types::Url::parse(uri).ok()?,
+                uri: parsed_uri,
                 language_id: language_id.to_string(),
                 version: 0,
                 text: content,
@@ -100,9 +102,8 @@ impl Middleware for DocumentLifecycleMiddleware {
                             
                             if let Some(did_open) = self.create_did_open_notification(&uri) {
                                 if let Ok(mut docs) = self.opened_documents.lock() {
-                                    docs.insert(uri.clone());
+                                    docs.insert(uri);
                                 }
-                                
                                 return Ok(Action::Inject(vec![did_open]));
                             }
                         }

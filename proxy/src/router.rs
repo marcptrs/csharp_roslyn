@@ -59,7 +59,7 @@ impl Router {
                 }
             };
             
-            info!("Client -> Server: {:?}", message.method());
+            debug!("Client -> Server: {:?}", message.method());
 
             let (processed, responses) = match self.pipeline.process_client_message(message.clone()) {
                 Ok((Some(msg), resps)) => (msg, resps),
@@ -83,13 +83,16 @@ impl Router {
             let forwarded = self.map_client_message(processed)?;
 
             let mut writer = self.server_writer.lock().await;
-            write_lsp_message(&mut *writer, &forwarded).await
-                .context("Failed to write to server")?;
             
+            // Send injected messages BEFORE the original message
+            // This ensures didOpen is sent before requests that need the document
             for injected in responses {
                 write_lsp_message(&mut *writer, &injected).await
                     .context("Failed to write middleware-injected message to server")?;
             }
+            
+            write_lsp_message(&mut *writer, &forwarded).await
+                .context("Failed to write to server")?;
         }
     }
 
