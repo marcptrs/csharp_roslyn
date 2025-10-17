@@ -175,7 +175,6 @@ mod tests {
 
     #[test]
     fn test_default_version() {
-        assert!(!DEFAULT_VERSION.is_empty());
         assert!(DEFAULT_VERSION.contains('.'));
     }
 

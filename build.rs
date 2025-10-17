@@ -17,7 +17,7 @@ fn main() {
         println!("cargo:warning=Building proxy for host platform before WASM build...");
 
         let status = Command::new("cargo")
-            .args(&[
+            .args([
                 "build",
                 "--release",
                 "--manifest-path=proxy/Cargo.toml",

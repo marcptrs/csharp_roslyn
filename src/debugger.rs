@@ -103,7 +103,6 @@ mod tests {
 
     #[test]
     fn test_debugger_version() {
-        assert!(!NETCOREDBG_VERSION.is_empty());
         assert!(NETCOREDBG_VERSION.contains('.'));
     }
 
