@@ -13,6 +13,8 @@ A fast, modern C# language support extension for Zed editor using Microsoft's Ro
 - 🔧 **Code Actions**: Quick fixes, refactorings, and code generation
 - 📝 **Formatting**: Document and range formatting with .editorconfig support
 - 🏷️ **Inlay Hints**: Parameter names and type hints
+- 🐞 **Debugging**: Integrated debugging with netcoredbg
+- ▶️ **Tasks**: Built-in dotnet task templates (build, run, test, etc.)
 
 ## Installation
 
@@ -172,6 +174,31 @@ dotnet sln add **/*.csproj
 dotnet restore
 dotnet build
 ```
+
+## Debugging
+
+The extension includes built-in debugging support using **netcoredbg**.
+
+### Debug Tasks
+
+The following tasks are available:
+- **dotnet: build** - Build the project/solution
+- **dotnet: run** - Run the project
+- **dotnet: test** - Run tests
+- **dotnet: clean** - Clean build artifacts
+- **dotnet: restore** - Restore NuGet packages
+- **dotnet: watch** - Watch and auto-rebuild on file changes
+
+### Debug Scenarios
+
+Debug scenarios are automatically created from `dotnet run` and `dotnet test` tasks. To debug:
+
+1. Open the command palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
+2. Select a task (e.g., "dotnet: run")
+3. A debug scenario will be created automatically
+4. Set breakpoints and start debugging
+
+The debugger (netcoredbg) is automatically downloaded on first use.
 
 ## Features in Detail
 
@@ -353,3 +380,5 @@ The Roslyn Language Server is licensed under the MIT license by Microsoft.
 - 🔍 Automatic solution file detection
 - 🎯 Multi-project solution support
 - 🐛 BCL navigation and decompilation support
+- 🐞 Debugging support with netcoredbg
+- ▶️ Task templates for dotnet commands
