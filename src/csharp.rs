@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use zed_extension_api::{self as zed, Result};
 
+#[cfg(all(target_family = "wasm", target_arch = "wasm32"))]
 use std::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,57 +159,55 @@ fn ensure_proxy() -> Result<PathBuf> {
 fn find_solution_file(worktree: &zed::Worktree) -> Option<String> {
     let workspace_root = worktree.root_path();
 
-    if let Some(dir_name) = workspace_root.split('/').last() {
-        let candidate = format!("{}.sln", dir_name);
-        if worktree.read_text_file(&candidate).is_ok() {
-            return Some(format!("{}/{}", workspace_root, candidate));
+    // Helper to join paths properly for both Windows and Unix
+    let join_path = |base: &str, parts: &[&str]| -> String {
+        let mut path = PathBuf::from(base);
+        for part in parts {
+            path.push(part);
         }
-    }
+        path.to_string_lossy().to_string()
+    };
 
-    let common_names = vec!["solution.sln", "Solution.sln"];
-    for name in common_names {
-        if worktree.read_text_file(name).is_ok() {
-            return Some(format!("{}/{}", workspace_root, name));
-        }
-    }
-
-    let mut found_solutions: Vec<String> = Vec::new();
+    // Extract just the directory name from the workspace root path
+    let dir_name = workspace_root
+        .trim_end_matches('/')
+        .trim_end_matches('\\')
+        .split(&['/', '\\'][..])
+        .next_back()
+        .unwrap_or("");
     
-    if let Ok(entries) = fs::read_dir(&workspace_root) {
-        for entry in entries.flatten() {
-            if let Ok(file_type) = entry.file_type() {
-                if file_type.is_dir() {
-                    if let Some(dir_name) = entry.file_name().to_str() {
-                        let sln_name = format!("{}.sln", dir_name);
-                        let relative_path = format!("{}/{}", dir_name, sln_name);
-                        
-                        if worktree.read_text_file(&relative_path).is_ok() {
-                            found_solutions.push(format!("{}/{}", workspace_root, relative_path));
-                        } else if let Ok(nested_entries) = fs::read_dir(format!("{}/{}", workspace_root, dir_name)) {
-                            for nested_entry in nested_entries.flatten() {
-                                if let Ok(nested_type) = nested_entry.file_type() {
-                                    if nested_type.is_dir() {
-                                        if let Some(nested_name) = nested_entry.file_name().to_str() {
-                                            let nested_sln = format!("{}.sln", nested_name);
-                                            let nested_path = format!("{}/{}/{}", dir_name, nested_name, nested_sln);
-                                            
-                                            if worktree.read_text_file(&nested_path).is_ok() {
-                                                found_solutions.push(format!("{}/{}", workspace_root, nested_path));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+    // Try directory name-based solution with case variations
+    if !dir_name.is_empty() {
+        let variants = vec![
+            dir_name.to_string(),
+            dir_name.to_lowercase(),
+            {
+                let mut chars = dir_name.chars();
+                if let Some(first) = chars.next() {
+                    format!("{}{}", first.to_uppercase(), chars.as_str().to_lowercase())
+                } else {
+                    String::new()
                 }
+            },
+            dir_name.to_uppercase(),
+        ];
+        
+        for variant in variants {
+            if variant.is_empty() {
+                continue;
+            }
+            let candidate = format!("{}.sln", variant);
+            if worktree.read_text_file(&candidate).is_ok() {
+                return Some(join_path(&workspace_root, &[&candidate]));
             }
         }
     }
 
-    if !found_solutions.is_empty() {
-        found_solutions.sort();
-        return found_solutions.into_iter().next();
+    // Try common solution file names
+    for name in &["solution.sln", "Solution.sln"] {
+        if worktree.read_text_file(name).is_ok() {
+            return Some(join_path(&workspace_root, &[name]));
+        }
     }
 
     None
@@ -246,7 +245,17 @@ pub fn get_initialization_options(worktree: &zed::Worktree) -> Result<Option<Val
     }
 
     if let Some(solution_path) = find_solution_file(worktree) {
-        options.insert("solution".to_string(), Value::String(solution_path));
+        // Convert to proper file:// URI
+        let solution_uri = if solution_path.starts_with('/') {
+            format!("file://{}", solution_path)
+        } else if solution_path.contains(":\\") || solution_path.contains(":/") {
+            let normalized = solution_path.replace('\\', "/");
+            format!("file:///{}", normalized)
+        } else {
+            format!("file://{}", solution_path)
+        };
+        
+        options.insert("solution".to_string(), Value::String(solution_uri));
     }
     Ok(Some(Value::Object(options)))
 }
@@ -587,7 +596,7 @@ impl zed::Extension for CsharpRoslynExtension {
             .map_err(|e| format!("Failed to serialize debug configuration: {e}"))?;
 
         Ok(zed::DebugScenario {
-            label: format!("Debug {}", program.split('/').last().unwrap_or(&program)),
+            label: format!("Debug {}", program.split('/').next_back().unwrap_or(&program)),
             adapter: config.adapter,
             build: None,
             config: config_str,
@@ -718,7 +727,7 @@ impl zed::Extension for CsharpRoslynExtension {
                     {
                         project_name = Some(name.to_string());
                     }
-                    if let Some(dir) = path_clean.rsplitn(2, '/').nth(1) {
+                    if let Some((dir, _)) = path_clean.rsplit_once('/') {
                         project_dir = Some(dir.to_string());
                     } else {
                         project_dir = Some(cwd_str.to_string());
@@ -734,7 +743,7 @@ impl zed::Extension for CsharpRoslynExtension {
                 {
                     project_name = Some(name.to_string());
                 }
-                if let Some(dir) = path_clean.rsplitn(2, '/').nth(1) {
+                if let Some((dir, _)) = path_clean.rsplit_once('/') {
                     project_dir = Some(dir.to_string());
                 } else {
                     project_dir = Some(cwd_str.to_string());
@@ -748,41 +757,91 @@ impl zed::Extension for CsharpRoslynExtension {
 
         let proj_dir = project_dir.unwrap_or_else(|| cwd_str.to_string());
 
-        let find_output = zed::process::Command::new("find")
-            .arg(format!("{}/bin/{}", proj_dir, configuration))
-            .arg("-name")
-            .arg(format!("{}.dll", proj_name))
-            .arg("-type")
-            .arg("f")
-            .output();
+        // Find the DLL using platform-specific search
+        let dll_path = {
+            #[cfg(target_os = "windows")]
+            {
+                // On Windows, use PowerShell's Get-ChildItem (dir)
+                let find_output = zed::process::Command::new("powershell")
+                    .arg("-NoProfile")
+                    .arg("-NonInteractive")
+                    .arg("-Command")
+                    .arg(format!(
+                        "Get-ChildItem -Path '{}/bin/{}' -Filter '{}.dll' -Recurse -File | Select-Object -First 1 -ExpandProperty FullName",
+                        proj_dir, configuration, proj_name
+                    ))
+                    .output();
 
-        let dll_path = match find_output {
-            Ok(output) => {
-                if output.status != Some(0) {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(format!(
-                        "Could not locate DLL: find command failed: {}",
-                        stderr
-                    ));
+                match find_output {
+                    Ok(output) => {
+                        if output.status != Some(0) {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            return Err(format!(
+                                "Could not locate DLL: PowerShell command failed: {}",
+                                stderr
+                            ));
+                        }
+
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        let dll = stdout
+                            .lines()
+                            .next()
+                            .ok_or_else(|| {
+                                format!(
+                                    "No DLL found for project '{}' in {}/bin/{}",
+                                    proj_name, proj_dir, configuration
+                                )
+                            })?
+                            .trim()
+                            .to_string();
+
+                        dll
+                    }
+                    Err(e) => {
+                        return Err(format!("Failed to search for DLL: {}", e));
+                    }
                 }
-
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let dll = stdout
-                    .lines()
-                    .next()
-                    .ok_or_else(|| {
-                        format!(
-                            "No DLL found for project '{}' in {}/bin/{}",
-                            proj_name, proj_dir, configuration
-                        )
-                    })?
-                    .trim()
-                    .to_string();
-
-                dll
             }
-            Err(e) => {
-                return Err(format!("Failed to search for DLL: {}", e));
+            #[cfg(not(target_os = "windows"))]
+            {
+                // On Unix-like systems, use find
+                let find_output = zed::process::Command::new("find")
+                    .arg(format!("{}/bin/{}", proj_dir, configuration))
+                    .arg("-name")
+                    .arg(format!("{}.dll", proj_name))
+                    .arg("-type")
+                    .arg("f")
+                    .output();
+
+                match find_output {
+                    Ok(output) => {
+                        if output.status != Some(0) {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            return Err(format!(
+                                "Could not locate DLL: find command failed: {}",
+                                stderr
+                            ));
+                        }
+
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        let dll = stdout
+                            .lines()
+                            .next()
+                            .ok_or_else(|| {
+                                format!(
+                                    "No DLL found for project '{}' in {}/bin/{}",
+                                    proj_name, proj_dir, configuration
+                                )
+                            })?
+                            .trim()
+                            .to_string();
+
+                        dll
+                    }
+                    Err(e) => {
+                        return Err(format!("Failed to search for DLL: {}", e));
+                    }
+                }
             }
         };
 
@@ -793,7 +852,7 @@ impl zed::Extension for CsharpRoslynExtension {
             .enumerate()
             .find(|(_, (k, _))| k == "ZED_DOTNET_PROGRAM_ARGS")
         {
-            if let Ok(restored) = serde_json::from_str::<Vec<String>>(&val) {
+            if let Ok(restored) = serde_json::from_str::<Vec<String>>(val) {
                 args = restored;
             }
             envs.remove(idx);
