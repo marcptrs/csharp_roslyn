@@ -6,9 +6,7 @@ const NETCOREDBG_REPO: &str = "https://github.com/marcptrs/netcoredbg";
 
 pub fn ensure_debugger(_worktree: &Worktree) -> Result<Command> {
     let cache_dir = get_debugger_cache_dir()?;
-    let debugger_binary = cache_dir
-        .join("netcoredbg")
-        .join(get_debugger_binary_name());
+    let debugger_binary = cache_dir.join(get_debugger_binary_name());
 
     if !debugger_binary.exists() {
         download_and_extract_debugger(&cache_dir)?;
@@ -86,9 +84,7 @@ fn download_and_extract_debugger(cache_dir: &Path) -> Result<()> {
     zed::download_file(&download_url, &cache_dir_str, file_type)
         .map_err(|e| format!("Failed to download netcoredbg from {}: {e}", download_url))?;
 
-    let debugger_binary = cache_dir
-        .join("netcoredbg")
-        .join(get_debugger_binary_name());
+    let debugger_binary = cache_dir.join(get_debugger_binary_name());
     if debugger_binary.exists() {
         zed::make_file_executable(&debugger_binary.to_string_lossy())
             .map_err(|e| format!("Failed to make debugger executable: {e}"))?;
