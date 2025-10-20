@@ -588,13 +588,22 @@ impl zed::Extension for CsharpRoslynExtension {
                 let mut derived = build_task.clone();
                 let mut new_args = vec!["build".to_string()];
 
+                let cwd = build_task.cwd.as_ref().map(|s| s.as_str()).unwrap_or(".");
+
                 let mut iter = args.iter().skip(1);
                 while let Some(arg) = iter.next() {
                     if arg == "--" {
                         break;
                     } else if arg == "--project" {
                         if let Some(project_file) = iter.next() {
-                            new_args.push(project_file.clone());
+                            let project_path = if project_file.starts_with('/') || project_file.contains(":\\") {
+                                project_file.clone()
+                            } else {
+                                let mut full_path = PathBuf::from(cwd);
+                                full_path.push(project_file);
+                                full_path.to_string_lossy().to_string()
+                            };
+                            new_args.push(project_path);
                         }
                     } else if !arg.starts_with("--") || arg == "--configuration" || arg == "-c" {
                         new_args.push(arg.clone());
