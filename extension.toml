@@ -1,7 +1,7 @@
 id = "csharp_roslyn"
 name = "C# (Roslyn)"
 description = "C# support via Roslyn Language Server & netcoredbg"
-version = "0.0.1"
+version = "0.0.2"
 schema_version = 1
 authors = ["Marc Peters <marc@peters.casa>"]
 repository = "https://github.com/marcptrs/csharp-roslyn"
@@ -13,41 +13,6 @@ language = "CSharp"
 [debug_adapters.netcoredbg]
 
 [debug_locators.dotnet]
-
-[[task_templates]]
-label = "dotnet: build"
-command = "dotnet"
-args = ["build"]
-
-[[task_templates]]
-label = "dotnet: run"
-command = "dotnet"
-args = ["run"]
-
-[[task_templates]]
-label = "dotnet: test"
-command = "dotnet"
-args = ["test"]
-
-[[task_templates]]
-label = "dotnet: clean"
-command = "dotnet"
-args = ["clean"]
-
-[[task_templates]]
-label = "dotnet: restore"
-command = "dotnet"
-args = ["restore"]
-
-[[task_templates]]
-label = "dotnet: watch"
-command = "dotnet"
-args = ["watch", "run"]
-
-[[capabilities]]
-kind = "process:exec"
-command = "find"
-args = ["**"]
 
 [grammars.c_sharp]
 repository = "https://github.com/tree-sitter/tree-sitter-c-sharp"

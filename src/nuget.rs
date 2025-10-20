@@ -8,7 +8,15 @@ pub struct ServerPackage {
     pub version: String,
 }
 
+pub struct WrapperBinary {
+    pub path: String,
+    pub version: String,
+}
+
 const DEFAULT_VERSION: &str = "5.0.0-1.25277.114";
+const WRAPPER_VERSION: &str = "0.1.0";
+const WRAPPER_REPO_OWNER: &str = "marcptrs";
+const WRAPPER_REPO_NAME: &str = "roslyn_wrapper";
 
 fn get_package_name() -> String {
     let (os, arch) = zed::current_platform();
@@ -22,6 +30,20 @@ fn get_package_name() -> String {
     };
 
     format!("microsoft.codeanalysis.languageserver.{}", platform_suffix)
+}
+
+fn get_wrapper_asset_name() -> String {
+    let (os, arch) = zed::current_platform();
+
+    let platform_suffix = match (os, arch) {
+        (zed::Os::Mac, zed::Architecture::Aarch64) => "osx-arm64",
+        (zed::Os::Mac, _) => "osx-x64",
+        (zed::Os::Linux, zed::Architecture::Aarch64) => "linux-arm64",
+        (zed::Os::Linux, _) => "linux-x64",
+        (zed::Os::Windows, _) => "win-x64.exe",
+    };
+
+    format!("roslyn-wrapper-{}", platform_suffix)
 }
 
 pub fn ensure_server(
@@ -150,7 +172,6 @@ fn search_for_dll(dir: &Path) -> Option<String> {
             if path.is_file() {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     if name == "Microsoft.CodeAnalysis.LanguageServer.dll" {
-                        // Convert to absolute path
                         let absolute_path = if path.is_absolute() {
                             path
                         } else {
@@ -167,6 +188,63 @@ fn search_for_dll(dir: &Path) -> Option<String> {
         }
     }
     None
+}
+
+pub fn ensure_wrapper(language_server_id: &LanguageServerId) -> Result<WrapperBinary> {
+    let version = WRAPPER_VERSION;
+    let cache_dir = Path::new("cache").join("wrapper").join(version);
+    
+    let _ = std::fs::create_dir_all(&cache_dir);
+
+    let asset_name = get_wrapper_asset_name();
+    let wrapper_path = cache_dir.join(&asset_name);
+    let wrapper_path_str = wrapper_path.to_string_lossy().to_string();
+
+    if !wrapper_path.exists() {
+        download_wrapper(language_server_id, version, &wrapper_path, &asset_name)?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = zed::make_file_executable(&wrapper_path_str);
+    }
+
+    Ok(WrapperBinary {
+        path: wrapper_path_str,
+        version: version.to_string(),
+    })
+}
+
+fn download_wrapper(
+    language_server_id: &LanguageServerId,
+    version: &str,
+    wrapper_path: &Path,
+    asset_name: &str,
+) -> Result<()> {
+    zed::set_language_server_installation_status(
+        language_server_id,
+        &zed::LanguageServerInstallationStatus::Downloading,
+    );
+
+    let download_url = format!(
+        "https://github.com/{}/{}/releases/download/v{}/{}",
+        WRAPPER_REPO_OWNER, WRAPPER_REPO_NAME, version, asset_name
+    );
+
+    zed::download_file(
+        &download_url,
+        &wrapper_path.to_string_lossy(),
+        zed::DownloadedFileType::Uncompressed,
+    )
+    .map_err(|e| {
+        let _ = std::fs::remove_file(wrapper_path);
+        format!(
+            "Failed to download roslyn-wrapper from {}: {}",
+            download_url, e
+        )
+    })?;
+
+    Ok(())
 }
 
 #[cfg(test)]

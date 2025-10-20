@@ -6,7 +6,7 @@ A fast, modern C# language support extension for Zed editor using Microsoft's Ro
 
 - ⚡ **Fast Startup**: 2-3 seconds (cached)
 - 🎯 **Modern LSP**: Direct integration with Microsoft's official Roslyn LSP server
-- 🎨 **Semantic Highlighting**: Advanced syntax highlighting using Roslyn's semantic model
+- 🎨 **Syntax Highlighting**: Tree-sitter based syntax highlighting (semantic tokens pending Zed support)
 - 💡 **IntelliSense**: Full code completion with documentation
 - 🔍 **Navigation**: Go to definition, find references, workspace symbols
 - ⚠️ **Diagnostics**: Real-time errors, warnings, and suggestions
@@ -220,15 +220,11 @@ class MyClass : BaseClass {
 }
 ```
 
-### Semantic Highlighting
+### Syntax Highlighting
 
-Advanced syntax coloring based on Roslyn's semantic model:
-- **Classes**: Different color from interfaces and structs
-- **Static members**: Visually distinct from instance members
-- **Parameters**: Different from local variables
-- **Deprecated symbols**: Strikethrough styling
+Tree-sitter based syntax highlighting with keyword and basic token coloring.
 
-**Customization**: Colors are controlled by your Zed theme.
+**Note**: Advanced semantic highlighting (distinguishing classes vs interfaces, static vs instance members, etc.) is configured and ready, but awaiting Zed's LSP semantic token support (PR [#39539](https://github.com/zed-industries/zed/pull/39539)). Once merged, semantic highlighting will work automatically without any extension changes.
 
 ### Diagnostics
 
@@ -293,10 +289,11 @@ Shows additional context inline:
 
 ## Known Limitations
 
-1. **Large Solutions**: Projects with 1000+ files may have slower analysis
-2. **Framework Navigation**: Requires decompilation (slight delay on first access)
-3. **Global Tools**: Roslyn analyzers from global tools not supported
-4. **Multi-Targeting**: Only primary target framework analyzed
+1. **Semantic Highlighting**: Not yet available - Zed doesn't support LSP semantic tokens (PR [#39539](https://github.com/zed-industries/zed/pull/39539) in progress). Extension is already configured and will work automatically once Zed adds support.
+2. **Large Solutions**: Projects with 1000+ files may have slower analysis
+3. **Framework Navigation**: Requires decompilation (slight delay on first access)
+4. **Global Tools**: Roslyn analyzers from global tools not supported
+5. **Multi-Targeting**: Only primary target framework analyzed
 
 ## Architecture
 
@@ -337,10 +334,12 @@ csharp_roslyn/
 
 ### How It Works
 
-1. **Extension Layer** (`src/`): Integrates with Zed, downloads Roslyn from NuGet, and spawns the proxy
-2. **Proxy Layer** (`proxy/`): Translates LSP protocol between Zed and Roslyn, handles middleware for features
-3. **Roslyn Server**: Microsoft's official C# language server (downloaded automatically)
-4. **Debug Adapter**: netcoredbg for debugging support (downloaded automatically)
+1. **Extension Layer** (`src/`): Integrates with Zed, downloads Roslyn from NuGet, and spawns the roslyn_wrapper
+2. **Wrapper Layer** ([roslyn_wrapper](https://github.com/marcptrs/roslyn_wrapper)): Standalone Rust binary that transparently proxies LSP protocol between Zed and Roslyn
+3. **Roslyn Server**: Microsoft's official C# language server (downloaded automatically from NuGet)
+4. **Debug Adapter**: netcoredbg for debugging support (downloaded automatically from [marcptrs/netcoredbg](https://github.com/marcptrs/netcoredbg))
+
+**Note**: The roslyn_wrapper and netcoredbg binaries are downloaded from GitHub releases maintained by the extension author.
 
 ## Contributing
 
@@ -369,10 +368,16 @@ The Roslyn Language Server is licensed under the MIT license by Microsoft.
 
 ## Changelog
 
+### v0.0.2
+- 🔄 **Architecture Change**: Migrated from embedded proxy to standalone [roslyn_wrapper](https://github.com/marcptrs/roslyn_wrapper) binary
+- 📝 Documentation improvements and clarifications
+- 🎨 Clarified semantic highlighting status (configured, awaiting Zed PR #39539)
+- 🧹 Code cleanup and consistency improvements
+
 ### v0.0.1 (Initial Release)
 - ✨ Initial implementation with Roslyn LSP and embedded proxy
 - ⚡ Fast startup via caching
-- 🎨 Semantic highlighting support
+- 🎨 Tree-sitter syntax highlighting (semantic highlighting configured, awaiting Zed support)
 - 💡 Full IntelliSense and diagnostics
 - 🔧 Code actions and refactoring
 - 📝 .editorconfig support

@@ -5,9 +5,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use zed_extension_api::{self as zed, Result};
 
-#[cfg(all(target_family = "wasm", target_arch = "wasm32"))]
-use std::fs;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoslynConfig {
     pub dotnet_sdk_path: Option<String>,
@@ -109,51 +106,6 @@ fn apply_initialization_options(config: &mut RoslynConfig, options: Value) {
             config.server_path = Some(server_path.clone());
         }
     }
-}
-
-#[cfg(all(target_family = "wasm", target_arch = "wasm32"))]
-const PROXY_BINARY: &[u8] = {
-    const BYTES: &[u8] = include_bytes!(concat!("../", env!("PROXY_BINARY_PATH")));
-    const _: () = assert!(
-        BYTES.len() > 1000000,
-        "Proxy binary seems too small - build may have failed"
-    );
-    BYTES
-};
-
-#[cfg(all(target_family = "wasm", target_arch = "wasm32"))]
-fn ensure_proxy() -> Result<PathBuf> {
-    let proxy_filename = if cfg!(target_os = "windows") {
-        "roslyn-lsp-proxy.exe"
-    } else {
-        "roslyn-lsp-proxy"
-    };
-
-    let proxy_dir = PathBuf::from("bin");
-    let proxy_path = proxy_dir.join(proxy_filename);
-
-    fs::create_dir_all(&proxy_dir)
-        .map_err(|e| format!("Failed to create proxy directory: {}", e))?;
-
-    if PROXY_BINARY.is_empty() {
-        return Err("Embedded proxy binary is empty - build may have failed".to_string());
-    }
-
-    fs::write(&proxy_path, PROXY_BINARY).map_err(|e| {
-        format!(
-            "Failed to write proxy binary ({} bytes): {}",
-            PROXY_BINARY.len(),
-            e
-        )
-    })?;
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        zed::make_file_executable(&proxy_path.to_string_lossy())
-            .map_err(|e| format!("Failed to set proxy permissions: {}", e))?;
-    }
-
-    Ok(proxy_path)
 }
 
 fn find_solution_file(worktree: &zed::Worktree) -> Option<String> {
@@ -318,12 +270,7 @@ impl zed::Extension for CsharpRoslynExtension {
         let config = load_config(worktree);
 
         let server_package = nuget::ensure_server(language_server_id, &config, worktree)?;
-
-        #[cfg(all(target_family = "wasm", target_arch = "wasm32"))]
-        let proxy_path = ensure_proxy()?;
-
-        #[cfg(not(all(target_family = "wasm", target_arch = "wasm32")))]
-        let proxy_path = PathBuf::from("roslyn-lsp-proxy");
+        let wrapper_binary = nuget::ensure_wrapper(language_server_id)?;
 
         let extra_args = get_extra_args(worktree);
         let env_vars = get_environment_variables(worktree);
@@ -336,10 +283,8 @@ impl zed::Extension for CsharpRoslynExtension {
             .into_iter()
             .collect::<Vec<(String, String)>>();
 
-        let proxy_path_str = proxy_path.to_string_lossy().to_string();
-
         let command = zed::Command {
-            command: proxy_path_str.clone(),
+            command: wrapper_binary.path,
             args,
             env,
         };
