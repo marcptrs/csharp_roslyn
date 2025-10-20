@@ -593,7 +593,6 @@ impl zed::Extension for CsharpRoslynExtension {
                     if arg == "--" {
                         break;
                     } else if arg == "--project" {
-                        new_args.push("--project".to_string());
                         if let Some(project_file) = iter.next() {
                             new_args.push(project_file.clone());
                         }
