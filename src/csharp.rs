@@ -1,259 +1,5 @@
-use crate::nuget;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use zed_extension_api::{self as zed, Result};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoslynConfig {
-    pub dotnet_sdk_path: Option<String>,
-    pub version: Option<String>,
-    pub server_path: Option<String>,
-    pub server_args: Vec<String>,
-    pub inlay_hints: InlayHintsConfig,
-    pub semantic_tokens: SemanticTokensConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InlayHintsConfig {
-    pub enabled: bool,
-    pub parameter_names: bool,
-    pub type_hints: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SemanticTokensConfig {
-    pub enabled: bool,
-}
-
-impl Default for RoslynConfig {
-    fn default() -> Self {
-        Self {
-            dotnet_sdk_path: None,
-            version: None,
-            server_path: None,
-            server_args: Vec::new(),
-            inlay_hints: InlayHintsConfig {
-                enabled: true,
-                parameter_names: true,
-                type_hints: true,
-            },
-            semantic_tokens: SemanticTokensConfig { enabled: true },
-        }
-    }
-}
-
-pub fn load_config(worktree: &zed::Worktree) -> RoslynConfig {
-    let mut config = RoslynConfig::default();
-
-    if let Ok(lsp_settings) = zed::settings::LspSettings::for_worktree("roslyn", worktree) {
-        if let Some(binary) = lsp_settings.binary {
-            if let Some(path) = binary.path {
-                config.dotnet_sdk_path = Some(path);
-            }
-            if let Some(args) = binary.arguments {
-                if !args.is_empty() {
-                    if args[0].ends_with(".dll") {
-                        config.server_path = Some(args[0].clone());
-                        config.server_args = args[1..].to_vec();
-                    } else {
-                        config.server_args = args;
-                    }
-                }
-            }
-        }
-
-        if let Some(init_options) = lsp_settings.initialization_options {
-            apply_initialization_options(&mut config, init_options);
-        }
-    }
-
-    config
-}
-
-fn apply_initialization_options(config: &mut RoslynConfig, options: Value) {
-    if let Value::Object(map) = options {
-        if let Some(Value::Bool(enabled)) = map.get("semanticTokens") {
-            config.semantic_tokens.enabled = *enabled;
-        }
-
-        if let Some(inlay_hints) = map.get("inlayHints") {
-            match inlay_hints {
-                Value::Bool(enabled) => {
-                    config.inlay_hints.enabled = *enabled;
-                }
-                Value::Object(hints_map) => {
-                    if let Some(Value::Bool(enabled)) = hints_map.get("enabled") {
-                        config.inlay_hints.enabled = *enabled;
-                    }
-                    if let Some(Value::Bool(param_names)) = hints_map.get("parameterNames") {
-                        config.inlay_hints.parameter_names = *param_names;
-                    }
-                    if let Some(Value::Bool(type_hints)) = hints_map.get("typeHints") {
-                        config.inlay_hints.type_hints = *type_hints;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if let Some(Value::String(version)) = map.get("version") {
-            config.version = Some(version.clone());
-        }
-
-        if let Some(Value::String(server_path)) = map.get("serverPath") {
-            config.server_path = Some(server_path.clone());
-        }
-    }
-}
-
-fn find_solution_file(worktree: &zed::Worktree) -> Option<String> {
-    let workspace_root = worktree.root_path();
-
-    // Helper to join paths properly for both Windows and Unix
-    let join_path = |base: &str, parts: &[&str]| -> String {
-        let mut path = PathBuf::from(base);
-        for part in parts {
-            path.push(part);
-        }
-        path.to_string_lossy().to_string()
-    };
-
-    // Extract just the directory name from the workspace root path
-    let dir_name = workspace_root
-        .trim_end_matches('/')
-        .trim_end_matches('\\')
-        .split(&['/', '\\'][..])
-        .next_back()
-        .unwrap_or("");
-    
-    // Try directory name-based solution with case variations
-    if !dir_name.is_empty() {
-        let variants = vec![
-            dir_name.to_string(),
-            dir_name.to_lowercase(),
-            {
-                let mut chars = dir_name.chars();
-                if let Some(first) = chars.next() {
-                    format!("{}{}", first.to_uppercase(), chars.as_str().to_lowercase())
-                } else {
-                    String::new()
-                }
-            },
-            dir_name.to_uppercase(),
-        ];
-        
-        for variant in variants {
-            if variant.is_empty() {
-                continue;
-            }
-            let candidate = format!("{}.sln", variant);
-            if worktree.read_text_file(&candidate).is_ok() {
-                return Some(join_path(&workspace_root, &[&candidate]));
-            }
-        }
-    }
-
-    // Try common solution file names
-    for name in &["solution.sln", "Solution.sln"] {
-        if worktree.read_text_file(name).is_ok() {
-            return Some(join_path(&workspace_root, &[name]));
-        }
-    }
-
-    None
-}
-
-pub fn get_initialization_options(worktree: &zed::Worktree) -> Result<Option<Value>> {
-    let mut options = serde_json::Map::new();
-
-    if let Ok(lsp_settings) = zed::settings::LspSettings::for_worktree("roslyn", worktree) {
-        if let Some(Value::Object(user_options)) = lsp_settings.initialization_options {
-            for (key, value) in user_options {
-                options.insert(key, value);
-            }
-        }
-    }
-
-    if !options.contains_key("enableImportCompletion") {
-        options.insert("enableImportCompletion".to_string(), Value::Bool(true));
-    }
-
-    if !options.contains_key("inlayHints") {
-        options.insert("inlayHints".to_string(), Value::Bool(true));
-    }
-    if !options.contains_key("enableAnalyzersSupport") {
-        options.insert("enableAnalyzersSupport".to_string(), Value::Bool(false));
-    }
-    if !options.contains_key("organizeImportsOnFormat") {
-        options.insert("organizeImportsOnFormat".to_string(), Value::Bool(false));
-    }
-    if !options.contains_key("enableDecompilationSupport") {
-        options.insert("enableDecompilationSupport".to_string(), Value::Bool(true));
-    }
-    if !options.contains_key("enableEditorConfigSupport") {
-        options.insert("enableEditorConfigSupport".to_string(), Value::Bool(false));
-    }
-
-    if let Some(solution_path) = find_solution_file(worktree) {
-        // Convert to proper file:// URI
-        let solution_uri = if solution_path.starts_with('/') {
-            format!("file://{}", solution_path)
-        } else if solution_path.contains(":\\") || solution_path.contains(":/") {
-            let normalized = solution_path.replace('\\', "/");
-            format!("file:///{}", normalized)
-        } else {
-            format!("file://{}", solution_path)
-        };
-        
-        options.insert("solution".to_string(), Value::String(solution_uri));
-    }
-    Ok(Some(Value::Object(options)))
-}
-
-pub fn get_extra_args(worktree: &zed::Worktree) -> Vec<String> {
-    let mut extra_args = Vec::new();
-
-    extra_args.push("--telemetryLevel".to_string());
-    extra_args.push("None".to_string());
-
-    if let Ok(lsp_settings) = zed::settings::LspSettings::for_worktree("roslyn", worktree) {
-        if let Some(binary) = lsp_settings.binary {
-            if let Some(args) = binary.arguments {
-                if args.len() > 1 {
-                    extra_args.extend(args[1..].to_vec());
-                }
-            }
-        }
-    }
-
-    extra_args
-}
-
-pub fn get_environment_variables(worktree: &zed::Worktree) -> Option<HashMap<String, String>> {
-    let mut env_vars = HashMap::new();
-    let mut has_vars = false;
-
-    if let Ok(lsp_settings) = zed::settings::LspSettings::for_worktree("roslyn", worktree) {
-        if let Some(Value::Object(options)) = lsp_settings.initialization_options {
-            if let Some(Value::Object(trace_options)) = options.get("trace") {
-                if let Some(Value::Bool(enabled)) = trace_options.get("protocol") {
-                    if *enabled {
-                        env_vars.insert("ROSLYN_LSP_TRACE".to_string(), "verbose".to_string());
-                        has_vars = true;
-                    }
-                }
-            }
-        }
-    }
-
-    if has_vars {
-        Some(env_vars)
-    } else {
-        None
-    }
-}
+use serde_json::json;
+use zed_extension_api::{self as zed, LanguageServerId, DownloadedFileType, Result};
 
 pub struct CsharpRoslynExtension;
 
@@ -264,561 +10,355 @@ impl zed::Extension for CsharpRoslynExtension {
 
     fn language_server_command(
         &mut self,
-        language_server_id: &zed::LanguageServerId,
-        worktree: &zed::Worktree,
+        _language_server_id: &LanguageServerId,
+        _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let config = load_config(worktree);
-
-        let server_package = nuget::ensure_server(language_server_id, &config, worktree)?;
-        let wrapper_binary = nuget::ensure_wrapper(language_server_id)?;
-
-        let extra_args = get_extra_args(worktree);
-        let env_vars = get_environment_variables(worktree);
-
-        let mut args = vec![server_package.dll_path.clone()];
-        args.extend(extra_args);
-
-        let env = env_vars
-            .unwrap_or_default()
-            .into_iter()
-            .collect::<Vec<(String, String)>>();
-
-        let command = zed::Command {
-            command: wrapper_binary.path,
-            args,
-            env,
-        };
-
-        Ok(command)
+        // Get or download roslyn-wrapper binary
+        let wrapper_path = get_or_download_wrapper()?;
+        
+        // Get or download Roslyn LSP server
+        let roslyn_lsp_path = get_or_download_roslyn_lsp()?;
+        
+        // Convert relative paths to absolute paths
+        let wrapper_abs = to_absolute_path(&wrapper_path)?;
+        let mut roslyn_lsp_abs = to_absolute_path(&roslyn_lsp_path)?;
+        
+        eprintln!("[csharp_roslyn] Wrapper path: {}", wrapper_abs);
+        eprintln!("[csharp_roslyn] LSP path before .exe check: {}", roslyn_lsp_abs);
+        
+        // On Windows, check if binary needs .exe extension
+        #[cfg(windows)]
+        {
+            if !std::fs::metadata(&roslyn_lsp_abs).is_ok_and(|m| m.is_file()) {
+                eprintln!("[csharp_roslyn] Binary not found at {}, trying with .exe", roslyn_lsp_abs);
+                // Try with .exe extension
+                let exe_path = format!("{}.exe", roslyn_lsp_abs);
+                if std::fs::metadata(&exe_path).is_ok_and(|m| m.is_file()) {
+                    eprintln!("[csharp_roslyn] Found binary with .exe at {}", exe_path);
+                    roslyn_lsp_abs = exe_path;
+                } else {
+                    eprintln!("[csharp_roslyn] Binary not found even with .exe at {}", exe_path);
+                }
+            } else {
+                eprintln!("[csharp_roslyn] Binary found at {}", roslyn_lsp_abs);
+            }
+        }
+        
+        eprintln!("[csharp_roslyn] Final LSP path: {}", roslyn_lsp_abs);
+        
+        // Verify file exists before passing to wrapper
+        match std::fs::metadata(&roslyn_lsp_abs) {
+            Ok(metadata) => {
+                eprintln!("[csharp_roslyn] File verified - Size: {} bytes", metadata.len());
+            }
+            Err(e) => {
+                eprintln!("[csharp_roslyn] ERROR: File does not exist! Error: {}", e);
+                return Err(format!("Roslyn LSP binary not found at: {}", roslyn_lsp_abs).into());
+            }
+        }
+        
+        // Pass Roslyn LSP path as argument to wrapper
+        // Note: Zed will normalize the path to forward slashes in JSON serialization
+        Ok(zed::Command {
+            command: wrapper_abs,
+            args: vec![roslyn_lsp_abs],
+            env: Default::default(),
+        })
     }
 
     fn language_server_initialization_options(
         &mut self,
-        _language_server_id: &zed::LanguageServerId,
+        _language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
-    ) -> Result<Option<zed::serde_json::Value>> {
-        let mut options = get_initialization_options(worktree)?;
-
-        if let Some(ref mut value) = options {
-            if let Some(object) = value.as_object_mut() {
-                let config = load_config(worktree);
-
-                if config.semantic_tokens.enabled {
-                    object.insert("semanticTokens".to_string(), Value::Bool(true));
-
-                    let token_types = vec![
-                        "class",
-                        "interface",
-                        "struct",
-                        "enum",
-                        "delegate",
-                        "record",
-                        "method",
-                        "extensionMethod",
-                        "constructor",
-                        "operator",
-                        "property",
-                        "event",
-                        "field",
-                        "constant",
-                        "parameter",
-                        "variable",
-                        "localFunction",
-                        "typeParameter",
-                        "keyword",
-                        "controlKeyword",
-                        "string",
-                        "number",
-                        "comment",
-                        "documentation",
-                        "namespace",
-                        "label",
-                        "preprocessorKeyword",
-                        "preprocessorText",
-                        "excludedCode",
-                        "attributeClass",
-                        "enumMember",
-                        "staticSymbol",
-                        "overriddenSymbol",
-                        "abstractSymbol",
-                        "deprecatedSymbol",
-                    ];
-
-                    let token_modifiers = vec![
-                        "static",
-                        "abstract",
-                        "virtual",
-                        "override",
-                        "sealed",
-                        "readonly",
-                        "const",
-                        "async",
-                        "deprecated",
-                        "defaultLibrary",
-                        "definition",
-                        "documentation",
-                    ];
-
-                    let semantic_config = zed::serde_json::json!({
-                        "enabled": true,
-                        "tokenTypes": token_types,
-                        "tokenModifiers": token_modifiers
-                    });
-
-                    object.insert("semanticTokensConfig".to_string(), semantic_config);
-                }
-
-                if config.inlay_hints.enabled {
-                    let inlay_hints_config = zed::serde_json::json!({
-                        "enabled": true,
-                        "parameterNames": config.inlay_hints.parameter_names,
-                        "typeHints": config.inlay_hints.type_hints
-                    });
-
-                    object.insert("inlayHints".to_string(), inlay_hints_config);
-                }
-
-                let diagnostic_config = zed::serde_json::json!({
-                    "enabled": true,
-                    "enableCompilationErrors": true,
-                    "enableSemanticErrors": true,
-                    "enableNullableWarnings": true,
-                    "enableDeprecationWarnings": true,
-                    "enableCodeAnalysis": true,
-                    "errorCodes": {
-                        "cs0103": "error",
-                        "cs0246": "error",
-                        "cs0117": "error",
-                        "cs8602": "warning",
-                        "cs8600": "warning",
-                        "cs8604": "warning",
-                        "cs8618": "warning",
-                        "cs0162": "information",
-                        "cs0168": "information",
-                        "cs0219": "information",
-                        "cs0414": "information",
-                        "cs0618": "warning",
-                        "cs0612": "warning"
-                    }
-                });
-
-                object.insert("diagnosticsConfig".to_string(), diagnostic_config);
-            }
-        }
-
-        Ok(options)
-    }
-
-    fn get_dap_binary(
-        &mut self,
-        _adapter_name: String,
-        config: zed::DebugTaskDefinition,
-        _user_provided_debug_adapter_path: Option<String>,
-        worktree: &zed::Worktree,
-    ) -> Result<zed::DebugAdapterBinary, String> {
-        let workspace_folder = worktree.root_path();
-
-        let command = crate::debugger::ensure_debugger(worktree)
-            .map_err(|e| format!("Failed to get debugger: {e}"))?;
-
-        let mut raw_json: Value = zed::serde_json::from_str(&config.config)
-            .map_err(|e| format!("Failed to parse debug configuration: {e}"))?;
-        let mut config_json = if let Some(inner) = raw_json.get_mut("config") {
-            inner.take()
+    ) -> Result<Option<serde_json::Value>> {
+        // Find solution file and pass it to Roslyn
+        if let Some(solution_path) = find_solution(worktree) {
+            let solution_uri = path_to_uri(&solution_path);
+            
+            // Return initialization options with solution file
+            // Roslyn expects this in the initialization options
+            Ok(Some(json!({
+                "solution": solution_uri
+            })))
         } else {
-            raw_json
-        };
-
-        if let Some(obj) = config_json.as_object_mut() {
-            for (_key, value) in obj.iter_mut() {
-                if let Some(s) = value.as_str() {
-                    let expanded = s.replace("${workspaceFolder}", &workspace_folder);
-                    *value = Value::String(expanded);
-                }
-            }
+            // If no solution found, still initialize but without solution context
+            // Roslyn will fall back to .csproj files in the root
+            Ok(Some(json!({})))
         }
-
-        let request_kind = match config_json.get("request") {
-            Some(launch) if launch == "launch" => {
-                zed::StartDebuggingRequestArgumentsRequest::Launch
-            }
-            Some(attach) if attach == "attach" => {
-                zed::StartDebuggingRequestArgumentsRequest::Attach
-            }
-            _ => zed::StartDebuggingRequestArgumentsRequest::Launch,
-        };
-
-        let config_str = zed::serde_json::to_string(&config_json)
-            .map_err(|e| format!("Failed to serialize debug configuration: {e}"))?;
-
-        Ok(zed::DebugAdapterBinary {
-            command: Some(command.command),
-            arguments: command.args,
-            cwd: Some(worktree.root_path()),
-            envs: command.env,
-            request_args: zed::StartDebuggingRequestArguments {
-                request: request_kind,
-                configuration: config_str,
-            },
-            connection: None,
-        })
     }
+}
 
-    fn dap_request_kind(
-        &mut self,
-        _adapter_name: String,
-        config: zed::serde_json::Value,
-    ) -> Result<zed::StartDebuggingRequestArgumentsRequest, String> {
-        if config.is_null() {
-            return Err("Config is null - awaiting locator resolution".to_string());
-        }
+/// Find solution files (.sln, .slnx, .slnf) in the workspace root
+/// Priority: .sln > .slnx > .slnf
+fn find_solution(worktree: &zed::Worktree) -> Option<String> {
+    let root = worktree.root_path();
+    
+    // Solution file names to search for, in order of preference
+    let patterns = vec![
+        "*.sln",    // Traditional solution files
+        "*.slnx",   // New format (VS 2022)
+        "*.slnf",   // Filtered solution format
+    ];
 
-        let cfg = if let Some(inner) = config.get("config") {
-            inner
-        } else {
-            &config
+    for pattern in patterns {
+        // Try all likely file names for this pattern
+        // We can't list directory contents in WASM, so we try common names
+        let candidates = match pattern {
+            "*.sln" => vec![
+                "Solution.sln",
+                "solution.sln",
+            ],
+            "*.slnx" => vec![
+                "Solution.slnx",
+                "solution.slnx",
+            ],
+            "*.slnf" => vec![
+                "Solution.slnf",
+                "solution.slnf",
+            ],
+            _ => vec![],
         };
-        match cfg.get("request") {
-            Some(launch) if launch == "launch" => {
-                Ok(zed::StartDebuggingRequestArgumentsRequest::Launch)
+
+        for name in candidates {
+            // Try to read the file to verify it exists
+            if worktree.read_text_file(name).is_ok() {
+                let full_path = format!("{}/{}", root, name);
+                return Some(full_path);
             }
-            Some(attach) if attach == "attach" => {
-                Ok(zed::StartDebuggingRequestArgumentsRequest::Attach)
-            }
-            Some(value) => Err(format!(
-                "Unexpected value for `request` key in C# debug adapter configuration: {value:?}"
-            )),
-            None => Err("Missing `request` field in debug configuration".to_string()),
         }
     }
 
-    fn dap_config_to_scenario(
-        &mut self,
-        config: zed::DebugConfig,
-    ) -> Result<zed::DebugScenario, String> {
-        let (program, cwd, args, envs) = match config.request {
-            zed::DebugRequest::Launch(ref launch) => {
-                let program = launch.program.clone();
-                let cwd = launch.cwd.clone().unwrap_or_else(|| ".".to_string());
-                let args = launch.args.clone();
-                let envs = launch.envs.clone();
-                (program, cwd, args, envs)
-            }
-            zed::DebugRequest::Attach(_) => {
-                return Err("Attach is not supported via dap_config_to_scenario".to_string());
-            }
-        };
+    None
+}
 
-        let mut debug_config = serde_json::Map::new();
-        debug_config.insert("type".to_string(), Value::String("netcoredbg".to_string()));
-        debug_config.insert("request".to_string(), Value::String("launch".to_string()));
-        debug_config.insert("program".to_string(), Value::String(program.clone()));
-        debug_config.insert("cwd".to_string(), Value::String(cwd.clone()));
+/// Convert a relative path to an absolute path
+/// Relative paths are relative to the extension's working directory
+fn to_absolute_path(path: &str) -> Result<String> {
+    let path_buf = std::path::PathBuf::from(path);
+    
+    // If already absolute, normalize and return
+    if path_buf.is_absolute() {
+        return Ok(normalize_path(&path_buf));
+    }
+    
+    // Get current working directory and join with relative path
+    let cwd = std::env::current_dir()
+        .map_err(|e| format!("Failed to get current directory: {}", e))?;
+    
+    let absolute_path = cwd.join(&path_buf);
+    Ok(normalize_path(&absolute_path))
+}
 
-        if !args.is_empty() {
-            debug_config.insert(
-                "args".to_string(),
-                Value::Array(args.iter().map(|a| Value::String(a.clone())).collect()),
-            );
+/// Normalize path to use backslashes on Windows
+fn normalize_path(path: &std::path::Path) -> String {
+    let path_str = path.to_str().unwrap_or("");
+    
+    #[cfg(windows)]
+    {
+        // On Windows, convert all forward slashes to backslashes
+        // This is important for process spawning which requires native path format
+        path_str.replace('/', "\\")
+    }
+    
+    #[cfg(not(windows))]
+    {
+        path_str.to_string()
+    }
+}
+
+/// Convert file path to file:// URI
+/// Handles both Windows (C:\path\to\file) and Unix (/path/to/file) paths
+fn path_to_uri(path: &str) -> String {
+    // Normalize backslashes to forward slashes
+    let normalized = path.replace('\\', "/");
+    
+    // Windows paths like C:/path/to/file need to become file:///C:/path/to/file
+    // Unix paths like /path/to/file need to become file:///path/to/file
+    
+    if normalized.len() > 1 && normalized.chars().nth(1) == Some(':') {
+        // Windows absolute path (C:/, D:/, etc.)
+        format!("file:///{}", normalized)
+    } else if normalized.starts_with("//") {
+        // UNC path (//server/share)
+        format!("file:{}", normalized)
+    } else if normalized.starts_with('/') {
+        // Unix absolute path
+        format!("file://{}", normalized)
+    } else {
+        // Relative path - shouldn't happen but handle it
+        format!("file:///{}", normalized)
+    }
+}
+
+/// Get or download the Roslyn LSP server binary from NuGet
+/// Returns the absolute path to the Microsoft.CodeAnalysis.LanguageServer executable
+fn get_or_download_roslyn_lsp() -> Result<String> {
+    let (os, arch) = zed::current_platform();
+    
+    // Map to RID (Runtime Identifier) used by NuGet packages
+    let (rid, binary_name) = match (os, arch) {
+        (zed::Os::Windows, zed::Architecture::X8664) => ("win-x64", "Microsoft.CodeAnalysis.LanguageServer.exe"),
+        (zed::Os::Windows, zed::Architecture::Aarch64) => ("win-arm64", "Microsoft.CodeAnalysis.LanguageServer.exe"),
+        (zed::Os::Mac, zed::Architecture::X8664) => ("osx-x64", "Microsoft.CodeAnalysis.LanguageServer"),
+        (zed::Os::Mac, zed::Architecture::Aarch64) => ("osx-arm64", "Microsoft.CodeAnalysis.LanguageServer"),
+        (zed::Os::Linux, zed::Architecture::X8664) => ("linux-x64", "Microsoft.CodeAnalysis.LanguageServer"),
+        (zed::Os::Linux, zed::Architecture::Aarch64) => ("linux-arm64", "Microsoft.CodeAnalysis.LanguageServer"),
+        _ => return Err("Unsupported platform for Roslyn LSP".into()),
+    };
+    
+    // Try these versions in order
+    let versions = vec![
+        "5.0.0-1.25277.114",
+        "4.12.0",
+        "4.11.0",
+        "4.10.0",
+    ];
+    
+    for version in versions {
+        let package_name = format!("Microsoft.CodeAnalysis.LanguageServer.{}", rid);
+        let cache_dir = format!("roslyn-lsp-{}", version);
+        
+        // Try to find cached binary first
+        if let Ok(found_path) = find_binary_in_dir(&cache_dir, binary_name) {
+            return Ok(found_path);
         }
-
-        if !envs.is_empty() {
-            let env_obj: serde_json::Map<String, Value> = envs
-                .iter()
-                .map(|(k, v)| (k.clone(), Value::String(v.clone())))
-                .collect();
-            debug_config.insert("env".to_string(), Value::Object(env_obj));
-        }
-
-        let stop_at_entry = config.stop_on_entry.unwrap_or(false);
-        debug_config.insert("stopAtEntry".to_string(), Value::Bool(stop_at_entry));
-        debug_config.insert(
-            "console".to_string(),
-            Value::String("integratedTerminal".to_string()),
+        
+        // Try to download from NuGet
+        let nuget_url = format!(
+            "https://www.nuget.org/api/v2/package/{}/{}",
+            package_name, version
         );
-
-        let config_str = zed::serde_json::to_string(&debug_config)
-            .map_err(|e| format!("Failed to serialize debug configuration: {e}"))?;
-
-        Ok(zed::DebugScenario {
-            label: format!("Debug {}", program.split('/').next_back().unwrap_or(&program)),
-            adapter: config.adapter,
-            build: None,
-            config: config_str,
-            tcp_connection: None,
-        })
+        
+        match zed::download_file(&nuget_url, &cache_dir, DownloadedFileType::Zip) {
+            Ok(()) => {
+                // After downloading, search for the binary in the extracted directory
+                if let Ok(found_path) = find_binary_in_dir(&cache_dir, binary_name) {
+                    // Make executable on Unix
+                    if !matches!(os, zed::Os::Windows) {
+                        let _ = zed::make_file_executable(&found_path);
+                    }
+                    return Ok(found_path);
+                }
+            }
+            Err(_) => {
+                // Continue to next version
+                continue;
+            }
+        }
     }
+    
+    // If we couldn't download from NuGet, try to find global installation
+    if let Ok(global_path) = find_global_roslyn_lsp() {
+        return Ok(global_path);
+    }
+    
+    Err("Failed to find or download Roslyn LSP. Please ensure you have internet access or install manually: dotnet tool install --global Microsoft.CodeAnalysis.LanguageServer".into())
+}
 
-    fn dap_locator_create_scenario(
-        &mut self,
-        locator_name: String,
-        build_task: zed::TaskTemplate,
-        resolved_label: String,
-        _debug_adapter_name: String,
-    ) -> Option<zed::DebugScenario> {
-        let cmd = &build_task.command;
-        {
-            let cmd_name = Path::new(cmd)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or(cmd);
-            let is_dotnet = cmd_name == "dotnet" || cmd_name == "dotnet.exe";
-            if !is_dotnet {
-                return None;
-            }
-        }
-
-        let collect_program_args = |args: &Vec<String>| -> Vec<String> {
-            if let Some(idx) = args.iter().position(|a| a == "--") {
-                args[idx + 1..].to_vec()
-            } else {
-                Vec::new()
-            }
-        };
-
-        let args = build_task.args.clone();
-        if args.is_empty() {
-            return None;
-        }
-
-        let program_args = collect_program_args(&args);
-
-        let derived_build_task = match args.first().map(|s| s.as_str()) {
-            Some("run") => {
-                let mut derived = build_task.clone();
-                let mut new_args = vec!["build".to_string()];
-
-                let cwd = build_task.cwd.as_ref().map(|s| s.as_str()).unwrap_or(".");
-
-                let mut iter = args.iter().skip(1);
-                while let Some(arg) = iter.next() {
-                    if arg == "--" {
-                        break;
-                    } else if arg == "--project" {
-                        if let Some(project_file) = iter.next() {
-                            let project_path = if project_file.starts_with('/') || project_file.contains(":\\") {
-                                project_file.clone()
-                            } else {
-                                let mut full_path = PathBuf::from(cwd);
-                                full_path.push(project_file);
-                                full_path.to_string_lossy().to_string()
-                            };
-                            new_args.push(project_path);
+/// Recursively search for a binary file in a directory
+fn find_binary_in_dir(dir: &str, binary_name: &str) -> Result<String> {
+    // Walk through directory looking for the binary
+    match std::fs::read_dir(dir) {
+        Ok(entries) => {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    
+                    if path.is_dir() {
+                        // Recursively search subdirectories
+                        if let Ok(found) = find_binary_in_dir(path.to_str().unwrap_or(dir), binary_name) {
+                            return Ok(found);
                         }
-                    } else if !arg.starts_with("--") || arg == "--configuration" || arg == "-c" {
-                        new_args.push(arg.clone());
-                        if arg == "--configuration" || arg == "-c" {
-                            if let Some(val) = iter.next() {
-                                new_args.push(val.clone());
+                    } else if let Some(file_name) = path.file_name() {
+                        if file_name.to_str() == Some(binary_name) {
+                            if let Some(path_str) = path.to_str() {
+                                return Ok(path_str.to_string());
                             }
                         }
                     }
                 }
-
-                derived.args = new_args;
-                derived
             }
-            _ => {
-                return None;
-            }
-        };
-
-        let mut derived_build_task = derived_build_task;
-        let mut env = derived_build_task.env.clone();
-        if !program_args.is_empty() {
-            env.push((
-                "ZED_DOTNET_PROGRAM_ARGS".to_string(),
-                serde_json::to_string(&program_args).unwrap_or_default(),
-            ));
         }
-        derived_build_task.env = env;
-
-        Some(zed::DebugScenario {
-            label: format!("Debug {}", resolved_label),
-            adapter: "netcoredbg".to_string(),
-            build: Some(zed::BuildTaskDefinition::Template(
-                zed::BuildTaskDefinitionTemplatePayload {
-                    template: derived_build_task.clone(),
-                    locator_name: Some(locator_name.clone()),
-                },
-            )),
-            config: "null".to_string(),
-            tcp_connection: None,
-        })
+        Err(_) => {
+            // Directory doesn't exist yet
+        }
     }
+    
+    Err(format!("Binary {} not found in {}", binary_name, dir).into())
+}
 
-    fn run_dap_locator(
-        &mut self,
-        _locator_name: String,
-        build_task: zed::TaskTemplate,
-    ) -> Result<zed::DebugRequest, String> {
-        let cwd_str = build_task
-            .cwd
-            .as_ref()
-            .ok_or_else(|| "Build task must have a cwd".to_string())?;
-
-        let mut configuration = String::from("Debug");
-        let mut args_iter = build_task.args.iter().peekable();
-        while let Some(arg) = args_iter.next() {
-            if arg == "--configuration" || arg == "-c" {
-                if let Some(val) = args_iter.next() {
-                    configuration = val.clone();
-                }
-            }
+/// Try to find globally installed Roslyn LSP from dotnet tools
+fn find_global_roslyn_lsp() -> Result<String> {
+    let (os, _arch) = zed::current_platform();
+    
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "Cannot determine home directory")?;
+    
+    let binary_name = match os {
+        zed::Os::Windows => "Microsoft.CodeAnalysis.LanguageServer.exe",
+        _ => "Microsoft.CodeAnalysis.LanguageServer",
+    };
+    
+    let possible_paths = match os {
+        zed::Os::Windows => vec![
+            format!("{}/.dotnet/tools/{}", home, binary_name),
+            format!("{}\\AppData\\Local\\Microsoft\\WinGet\\Links\\{}", home, binary_name),
+        ],
+        _ => vec![
+            format!("{}/.dotnet/tools/{}", home, binary_name),
+        ],
+    };
+    
+    for path in possible_paths {
+        if std::fs::metadata(&path).is_ok_and(|m| m.is_file()) {
+            return Ok(path);
         }
+    }
+    
+    Err("Global Roslyn LSP installation not found".into())
+}
 
-        let mut project_name: Option<String> = None;
-        let mut project_dir: Option<String> = None;
-        let mut iter = build_task.args.iter();
-        while let Some(arg) = iter.next() {
-            if arg == "--project" {
-                if let Some(path) = iter.next() {
-                    let path_clean = path.replace("${workspaceFolder}", cwd_str);
-                    if let Some(name) = path_clean
-                        .rsplit('/')
-                        .next()
-                        .and_then(|n| n.strip_suffix(".csproj"))
-                    {
-                        project_name = Some(name.to_string());
-                    }
-                    if let Some((dir, _)) = path_clean.rsplit_once('/') {
-                        project_dir = Some(dir.to_string());
-                    } else {
-                        project_dir = Some(cwd_str.to_string());
-                    }
-                }
-                break;
-            } else if arg.ends_with(".csproj") {
-                let path_clean = arg.replace("${workspaceFolder}", cwd_str);
-                if let Some(name) = path_clean
-                    .rsplit('/')
-                    .next()
-                    .and_then(|n| n.strip_suffix(".csproj"))
-                {
-                    project_name = Some(name.to_string());
-                }
-                if let Some((dir, _)) = path_clean.rsplit_once('/') {
-                    project_dir = Some(dir.to_string());
-                } else {
-                    project_dir = Some(cwd_str.to_string());
-                }
-                break;
+/// Get or download the roslyn-wrapper binary
+/// Returns the path to the wrapper executable
+fn get_or_download_wrapper() -> Result<String> {
+    // Use runtime OS detection instead of compile-time cfg! checks
+    // Extensions are compiled to WASM, so cfg!(windows) is always false
+    let (os, arch) = zed::current_platform();
+    
+    let (platform, binary_name) = match (os, arch) {
+        (zed::Os::Windows, _) => ("x86_64-pc-windows-msvc", "roslyn-wrapper.exe"),
+        (zed::Os::Mac, zed::Architecture::Aarch64) => ("aarch64-apple-darwin", "roslyn-wrapper"),
+        (zed::Os::Mac, _) => ("x86_64-apple-darwin", "roslyn-wrapper"),
+        (zed::Os::Linux, _) => ("x86_64-unknown-linux-gnu", "roslyn-wrapper"),
+    };
+    
+    // Version of roslyn-wrapper to download
+    let version = "0.1.0";
+    let relative_path = format!("roslyn-wrapper-{}/{}", version, binary_name);
+    
+    // Try to download wrapper from GitHub releases
+    let download_url = format!(
+        "https://github.com/marcptrs/roslyn-wrapper/releases/download/v{}/roslyn-wrapper-{}{}",
+        version,
+        platform,
+        if matches!(os, zed::Os::Windows) { ".exe" } else { "" }
+    );
+    
+    match zed::download_file(&download_url, &relative_path, DownloadedFileType::Uncompressed) {
+        Ok(()) => {
+            // Make executable on Unix
+            if !matches!(os, zed::Os::Windows) {
+                let _ = zed::make_file_executable(&relative_path);
             }
+            
+            Ok(relative_path)
         }
-
-        let proj_name = project_name
-            .ok_or_else(|| "Could not determine project name from build task args".to_string())?;
-
-        let proj_dir = project_dir.unwrap_or_else(|| cwd_str.to_string());
-
-        // Find the DLL using platform-specific search
-        let dll_path = {
-            #[cfg(target_os = "windows")]
-            {
-                // On Windows, use PowerShell's Get-ChildItem (dir)
-                let find_output = zed::process::Command::new("powershell")
-                    .arg("-NoProfile")
-                    .arg("-NonInteractive")
-                    .arg("-Command")
-                    .arg(format!(
-                        "Get-ChildItem -Path '{}/bin/{}' -Filter '{}.dll' -Recurse -File | Select-Object -First 1 -ExpandProperty FullName",
-                        proj_dir, configuration, proj_name
-                    ))
-                    .output();
-
-                match find_output {
-                    Ok(output) => {
-                        if output.status != Some(0) {
-                            let stderr = String::from_utf8_lossy(&output.stderr);
-                            return Err(format!(
-                                "Could not locate DLL: PowerShell command failed: {}",
-                                stderr
-                            ));
-                        }
-
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let dll = stdout
-                            .lines()
-                            .next()
-                            .ok_or_else(|| {
-                                format!(
-                                    "No DLL found for project '{}' in {}/bin/{}",
-                                    proj_name, proj_dir, configuration
-                                )
-                            })?
-                            .trim()
-                            .to_string();
-
-                        dll
-                    }
-                    Err(e) => {
-                        return Err(format!("Failed to search for DLL: {}", e));
-                    }
-                }
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                // On Unix-like systems, use find
-                let find_output = zed::process::Command::new("find")
-                    .arg(format!("{}/bin/{}", proj_dir, configuration))
-                    .arg("-name")
-                    .arg(format!("{}.dll", proj_name))
-                    .arg("-type")
-                    .arg("f")
-                    .output();
-
-                match find_output {
-                    Ok(output) => {
-                        if output.status != Some(0) {
-                            let stderr = String::from_utf8_lossy(&output.stderr);
-                            return Err(format!(
-                                "Could not locate DLL: find command failed: {}",
-                                stderr
-                            ));
-                        }
-
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let dll = stdout
-                            .lines()
-                            .next()
-                            .ok_or_else(|| {
-                                format!(
-                                    "No DLL found for project '{}' in {}/bin/{}",
-                                    proj_name, proj_dir, configuration
-                                )
-                            })?
-                            .trim()
-                            .to_string();
-
-                        dll
-                    }
-                    Err(e) => {
-                        return Err(format!("Failed to search for DLL: {}", e));
-                    }
-                }
-            }
-        };
-
-        let mut args: Vec<String> = Vec::new();
-        let mut envs = build_task.env.clone();
-        if let Some((idx, (_, val))) = envs
-            .iter()
-            .enumerate()
-            .find(|(_, (k, _))| k == "ZED_DOTNET_PROGRAM_ARGS")
-        {
-            if let Ok(restored) = serde_json::from_str::<Vec<String>>(val) {
-                args = restored;
-            }
-            envs.remove(idx);
+        Err(_) => {
+            // If download fails, return the relative path anyway
+            // The binary might have been manually copied there by the build script
+            // or by the user for local development
+            Ok(relative_path)
         }
-
-        let request = zed::DebugRequest::Launch(zed::LaunchRequest {
-            program: dll_path,
-            cwd: Some(cwd_str.to_string()),
-            args: args.clone(),
-            envs: envs.clone(),
-        });
-
-        Ok(request)
     }
 }
