@@ -66,6 +66,19 @@ impl zed::Extension for CsharpRoslynExtension {
 }
 
 impl CsharpRoslynExtension {
+    /// Get the cache directory for this extension (uses the extension's working directory)
+    fn get_cache_dir(&self) -> Result<String> {
+        // Extensions run in Zed's sandbox and have their working directory set to the extension's directory.
+        // We use relative paths within that working directory for caching downloaded binaries.
+        let cache_dir = ".cache/csharp_roslyn";
+        
+        // Ensure the cache directory exists
+        std::fs::create_dir_all(&cache_dir)
+            .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+        
+        Ok(cache_dir.to_string())
+    }
+
     /// Get or download the roslyn-wrapper binary from GitHub releases
     fn get_or_download_wrapper(
         &mut self,
@@ -76,6 +89,12 @@ impl CsharpRoslynExtension {
                 return Ok(cached.clone());
             }
         }
+
+        // Build absolute path to Zed cache directory for this extension
+        let cache_dir = self.get_cache_dir()?;
+        
+        // Log for debugging
+        eprintln!("[csharp_roslyn] Cache directory: {}", cache_dir);
 
         let (platform, arch) = zed::current_platform();
         let (platform_str, binary_name) = match (platform, arch) {
@@ -91,7 +110,7 @@ impl CsharpRoslynExtension {
         );
 
         let release = zed::latest_github_release(
-            "marcptrs/roslyn-wrapper",
+            "marcptrs/roslyn_wrapper",
             zed::GithubReleaseOptions {
                 require_assets: true,
                 pre_release: false,
@@ -108,9 +127,26 @@ impl CsharpRoslynExtension {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| format!("no asset found matching: {}", asset_name))?;
 
-        let version_dir = format!("roslyn-wrapper-{}", release.version);
+        // First check for development/testing cache (fixed path, no versioning)
+        let dev_cache_path = format!("{}/roslyn-wrapper-dev/{}", cache_dir, binary_name);
+        if fs::metadata(&dev_cache_path).map_or(false, |stat| stat.is_file()) {
+            eprintln!("[csharp_roslyn] Found development wrapper binary at: {}", dev_cache_path);
+            self.cached_wrapper_path = Some(dev_cache_path.clone());
+            return Ok(dev_cache_path);
+        }
+
+        // Then check versioned cache from previous downloads
+        let version_dir = format!("{}/roslyn-wrapper-{}", cache_dir, release.version);
         let binary_path = format!("{}/{}", version_dir, binary_name);
 
+        // Check if binary already exists in versioned cache
+        if fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
+            eprintln!("[csharp_roslyn] Found cached wrapper binary at: {}", binary_path);
+            self.cached_wrapper_path = Some(binary_path.clone());
+            return Ok(binary_path);
+        }
+
+        // Download from GitHub if not in cache
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
                 language_server_id,
@@ -129,14 +165,18 @@ impl CsharpRoslynExtension {
                 let _ = zed::make_file_executable(&binary_path);
             }
 
-            // Clean up old versions
-            let entries = fs::read_dir(".").map_err(|e| format!("failed to list directory: {}", e))?;
-            for entry in entries {
-                let entry = entry.map_err(|e| format!("failed to read entry: {}", e))?;
-                let file_name = entry.file_name();
-                let name_str = file_name.to_str().unwrap_or("");
-                if name_str.starts_with("roslyn-wrapper-") && name_str != version_dir {
-                    let _ = fs::remove_dir_all(entry.path());
+            // Clean up old versions (keeping only the current one)
+            if let Ok(entries) = fs::read_dir(&cache_dir) {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        let file_name = entry.file_name();
+                        let name_str = file_name.to_str().unwrap_or("");
+                        if name_str.starts_with("roslyn-wrapper-") 
+                            && name_str != format!("roslyn-wrapper-{}", release.version)
+                            && !name_str.ends_with("-dev") {
+                            let _ = fs::remove_dir_all(entry.path());
+                        }
+                    }
                 }
             }
         }
@@ -156,6 +196,9 @@ impl CsharpRoslynExtension {
             }
         }
 
+        // Get absolute cache directory
+        let cache_dir = self.get_cache_dir()?;
+
         let (platform, arch) = zed::current_platform();
         let (rid, binary_name) = match (platform, arch) {
             (zed::Os::Windows, zed::Architecture::X8664) => ("win-x64", "Microsoft.CodeAnalysis.LanguageServer.exe"),
@@ -170,7 +213,7 @@ impl CsharpRoslynExtension {
         // Try to download the latest version of Roslyn LSP from NuGet
         let version = "5.0.0-1.25277.114";
         let package_name = format!("Microsoft.CodeAnalysis.LanguageServer.{}", rid);
-        let version_dir = format!("roslyn-lsp-{}-{}", rid, version);
+        let version_dir = format!("{}/roslyn-lsp-{}-{}", cache_dir, rid, version);
 
         // Try to find cached binary first
         if let Ok(found_path) = find_binary_in_dir(&version_dir, binary_name) {
@@ -200,14 +243,16 @@ impl CsharpRoslynExtension {
                     let _ = zed::make_file_executable(&found_path);
                 }
 
-                // Clean up old versions
-                let entries = fs::read_dir(".").map_err(|e| format!("failed to list directory: {}", e))?;
-                for entry in entries {
-                    if let Ok(entry) = entry {
-                        let file_name = entry.file_name();
-                        let name_str = file_name.to_str().unwrap_or("");
-                        if name_str.starts_with("roslyn-lsp-") && name_str != version_dir {
-                            let _ = fs::remove_dir_all(entry.path());
+                // Clean up old versions (keep current version only)
+                if let Ok(entries) = fs::read_dir(&cache_dir) {
+                    for entry in entries {
+                        if let Ok(entry) = entry {
+                            let file_name = entry.file_name();
+                            let name_str = file_name.to_str().unwrap_or("");
+                            if name_str.starts_with("roslyn-lsp-") 
+                                && name_str != format!("roslyn-lsp-{}-{}", rid, version) {
+                                let _ = fs::remove_dir_all(entry.path());
+                            }
                         }
                     }
                 }
@@ -296,28 +341,39 @@ fn find_binary_in_dir(dir: &str, binary_name: &str) -> Result<String> {
 
 /// Try to find globally installed Roslyn LSP from dotnet tools
 fn find_global_roslyn_lsp(platform: zed::Os) -> Result<String> {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| "Cannot determine home directory")?;
-    
     let binary_name = match platform {
         zed::Os::Windows => "Microsoft.CodeAnalysis.LanguageServer.exe",
         _ => "Microsoft.CodeAnalysis.LanguageServer",
     };
     
-    let possible_paths = match platform {
-        zed::Os::Windows => vec![
-            format!("{}/.dotnet/tools/{}", home, binary_name),
-            format!("{}\\AppData\\Local\\Microsoft\\WinGet\\Links\\{}", home, binary_name),
-        ],
-        _ => vec![
-            format!("{}/.dotnet/tools/{}", home, binary_name),
-        ],
-    };
+    // Try using the which command to find the binary on PATH first
+    if let Ok(which_cmd) = std::process::Command::new("which")
+        .arg(binary_name)
+        .output() {
+        if which_cmd.status.success() {
+            let path = String::from_utf8_lossy(&which_cmd.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(path);
+            }
+        }
+    }
     
-    for path in possible_paths {
-        if fs::metadata(&path).map_or(false, |m| m.is_file()) {
-            return Ok(path);
+    // Fallback: try environment-based search if HOME is available
+    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+        let possible_paths = match platform {
+            zed::Os::Windows => vec![
+                format!("{}/.dotnet/tools/{}", home, binary_name),
+                format!("{}\\AppData\\Local\\Microsoft\\WinGet\\Links\\{}", home, binary_name),
+            ],
+            _ => vec![
+                format!("{}/.dotnet/tools/{}", home, binary_name),
+            ],
+        };
+        
+        for path in possible_paths {
+            if fs::metadata(&path).map_or(false, |m| m.is_file()) {
+                return Ok(path);
+            }
         }
     }
     
