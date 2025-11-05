@@ -167,61 +167,53 @@ impl CsharpRoslynExtension {
             _ => return Err("Unsupported platform for Roslyn LSP".into()),
         };
 
-        let versions = vec!["5.0.0-1.25277.114", "4.12.0", "4.11.0", "4.10.0"];
+        // Try to download the latest version of Roslyn LSP from NuGet
+        let version = "5.0.0-1.25277.114";
+        let package_name = format!("Microsoft.CodeAnalysis.LanguageServer.{}", rid);
+        let version_dir = format!("roslyn-lsp-{}-{}", rid, version);
 
-        for version in versions {
-            let package_name = format!("Microsoft.CodeAnalysis.LanguageServer.{}", rid);
-            let version_dir = format!("roslyn-lsp-{}-{}", rid, version);
+        // Try to find cached binary first
+        if let Ok(found_path) = find_binary_in_dir(&version_dir, binary_name) {
+            self.cached_roslyn_path = Some(found_path.clone());
+            return Ok(found_path);
+        }
 
-            // Try to find cached binary first
+        let nuget_url = format!(
+            "https://www.nuget.org/api/v2/package/{}/{}",
+            package_name, version
+        );
+
+        zed::set_language_server_installation_status(
+            language_server_id,
+            &zed::LanguageServerInstallationStatus::Downloading,
+        );
+
+        let file_type = match platform {
+            zed::Os::Windows => DownloadedFileType::Zip,
+            _ => DownloadedFileType::GzipTar,
+        };
+
+        if zed::download_file(&nuget_url, &version_dir, file_type).is_ok() {
             if let Ok(found_path) = find_binary_in_dir(&version_dir, binary_name) {
-                self.cached_roslyn_path = Some(found_path.clone());
-                return Ok(found_path);
-            }
+                // Make executable on Unix
+                if !matches!(platform, zed::Os::Windows) {
+                    let _ = zed::make_file_executable(&found_path);
+                }
 
-            let nuget_url = format!(
-                "https://www.nuget.org/api/v2/package/{}/{}",
-                package_name, version
-            );
-
-            zed::set_language_server_installation_status(
-                language_server_id,
-                &zed::LanguageServerInstallationStatus::Downloading,
-            );
-
-            let file_type = match platform {
-                zed::Os::Windows => DownloadedFileType::Zip,
-                _ => DownloadedFileType::GzipTar,
-            };
-
-            match zed::download_file(&nuget_url, &version_dir, file_type) {
-                Ok(()) => {
-                    if let Ok(found_path) = find_binary_in_dir(&version_dir, binary_name) {
-                        // Make executable on Unix
-                        if !matches!(platform, zed::Os::Windows) {
-                            let _ = zed::make_file_executable(&found_path);
+                // Clean up old versions
+                let entries = fs::read_dir(".").map_err(|e| format!("failed to list directory: {}", e))?;
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        let file_name = entry.file_name();
+                        let name_str = file_name.to_str().unwrap_or("");
+                        if name_str.starts_with("roslyn-lsp-") && name_str != version_dir {
+                            let _ = fs::remove_dir_all(entry.path());
                         }
-
-                        // Clean up old versions
-                        let entries = fs::read_dir(".").map_err(|e| format!("failed to list directory: {}", e))?;
-                        for entry in entries {
-                            if let Ok(entry) = entry {
-                                let file_name = entry.file_name();
-                                let name_str = file_name.to_str().unwrap_or("");
-                                if name_str.starts_with("roslyn-lsp-") && name_str != version_dir {
-                                    let _ = fs::remove_dir_all(entry.path());
-                                }
-                            }
-                        }
-
-                        self.cached_roslyn_path = Some(found_path.clone());
-                        return Ok(found_path);
                     }
                 }
-                Err(_) => {
-                    // Try next version
-                    continue;
-                }
+
+                self.cached_roslyn_path = Some(found_path.clone());
+                return Ok(found_path);
             }
         }
 
