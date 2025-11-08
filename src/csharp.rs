@@ -1,5 +1,8 @@
+use std::path::{Path, PathBuf};
+
 use serde_json::json;
-use zed_extension_api::{self as zed, LanguageServerId, Result};
+use url::Url;
+use zed_extension_api::{self as zed, settings::LspSettings, LanguageServerId, Result};
 
 pub struct CsharpRoslynExtension;
 
@@ -16,12 +19,14 @@ impl zed::Extension for CsharpRoslynExtension {
         // Find the roslyn-wrapper binary
         let (platform, _arch) = zed::current_platform();
         let wrapper_path = find_roslyn_wrapper(platform, worktree)?;
-        
+
         // Run roslyn-wrapper (which will handle finding/downloading Roslyn)
+        let mut env = worktree.shell_env();
+        env.push(("ROSLYN_WRAPPER_CWD".into(), worktree.root_path()));
         Ok(zed::Command {
             command: wrapper_path,
             args: vec![],
-            env: Default::default(),
+            env,
         })
     }
 
@@ -30,67 +35,35 @@ impl zed::Extension for CsharpRoslynExtension {
         _language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<Option<serde_json::Value>> {
-        // Find solution file and pass it to Roslyn
-        if let Some(solution_path) = find_solution(worktree) {
-            let solution_uri = path_to_uri(&solution_path);
-            
-            Ok(Some(json!({
-                "solution": solution_uri
-            })))
-        } else {
-            // Initialize without solution if not found
-            Ok(Some(json!({})))
+        // Try to get solution path from settings first
+        if let Some(solution_setting) = get_solution_path_from_settings(worktree) {
+            if let Some(solution_uri) = resolve_solution_uri(&solution_setting, worktree) {
+                return Ok(Some(json!({ "solution": solution_uri })));
+            }
         }
+
+        // Fallback: try to auto-detect solution
+        if let Some(solution_path) = find_solution(worktree) {
+            if let Some(solution_uri) = resolve_solution_uri(&solution_path, worktree) {
+                return Ok(Some(json!({ "solution": solution_uri })));
+            }
+        }
+
+        // No solution found - initialize without explicit solution
+        // and let the wrapper handle project discovery
+        Ok(Some(json!({})))
     }
 }
 
+/// Read solution path from user settings
+fn get_solution_path_from_settings(worktree: &zed::Worktree) -> Option<String> {
+    let settings = LspSettings::for_worktree("roslyn", worktree).ok()?;
 
-
-/// Find solution files (.sln, .slnx, .slnf) in the workspace root
-fn find_solution(worktree: &zed::Worktree) -> Option<String> {
-    let root = worktree.root_path();
-    let extensions = vec!["sln", "slnx", "slnf"];
-    
-    // Get the directory name from the root path
-    let root_name = root.split('/').last().unwrap_or("");
-    
-    // Try variations of the directory name to handle different naming conventions
-    let variations = vec![
-        // Exact directory name
-        root_name.to_string(),
-        // PascalCase from snake_case (test_csharp_project -> TestCsharpProject)
-        root_name.split('_')
-            .map(|s| {
-                let mut chars = s.chars();
-                match chars.next() {
-                    None => String::new(),
-                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(""),
-        // PascalCase from kebab-case
-        root_name.split('-')
-            .map(|s| {
-                let mut chars = s.chars();
-                match chars.next() {
-                    None => String::new(),
-                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(""),
-        // Common names
-        "Solution".to_string(),
-        "solution".to_string(),
-    ];
-    
-    // Try each variation with each extension
-    for variant in &variations {
-        for ext in &extensions {
-            let candidate = format!("{}.{}", variant, ext);
-            if worktree.read_text_file(&candidate).is_ok() {
-                return Some(format!("{}/{}", root, candidate));
+    // Try to get solution_path from settings
+    if let Some(init_options) = settings.initialization_options {
+        if let Some(solution) = init_options.get("solution") {
+            if let Some(solution_str) = solution.as_str() {
+                return Some(solution_str.to_string());
             }
         }
     }
@@ -98,31 +71,49 @@ fn find_solution(worktree: &zed::Worktree) -> Option<String> {
     None
 }
 
+/// Attempt to detect a solution file in a minimal, API-compatible way.
+/// Currently returns None because Worktree doesn't support directory iteration.
+fn find_solution(_worktree: &zed::Worktree) -> Option<String> {
+    None
+}
+
 /// Convert file path to file:// URI
-fn path_to_uri(path: &str) -> String {
-    let normalized = path.replace('\\', "/");
-    
-    if normalized.len() > 1 && normalized.chars().nth(1) == Some(':') {
-        format!("file:///{}", normalized)
-    } else if normalized.starts_with("//") {
-        format!("file:{}", normalized)
-    } else if normalized.starts_with('/') {
-        format!("file://{}", normalized)
-    } else {
-        format!("file:///{}", normalized)
+fn path_to_uri(path: impl AsRef<Path>) -> String {
+    let path = path.as_ref();
+    match Url::from_file_path(path) {
+        Ok(url) => url.into(),
+        Err(_) => format!("file://{}", path.to_string_lossy().replace('\\', "/")),
     }
 }
 
 /// Find the roslyn-wrapper binary
-fn find_roslyn_wrapper(platform: zed::Os, _worktree: &zed::Worktree) -> Result<String> {
+fn find_roslyn_wrapper(platform: zed::Os, worktree: &zed::Worktree) -> Result<String> {
     let binary_name = match platform {
         zed::Os::Windows => "roslyn-wrapper.exe",
         _ => "roslyn-wrapper",
     };
-    
-    // Return just the binary name
-    // Zed will resolve this relative to the extension's installed directory
-    // which is: ~/Library/Application Support/Zed/extensions/installed/csharp_roslyn/
-    Ok(binary_name.to_string())
+
+    if let Some(path) = worktree.which(binary_name) {
+        return Ok(path);
+    }
+
+    // Zed bundles binaries alongside the extension contents under `roslyn-wrapper/`
+    Ok(format!("roslyn-wrapper/{}", binary_name))
 }
 
+fn resolve_solution_uri(value: &str, worktree: &zed::Worktree) -> Option<String> {
+    if value.trim().is_empty() {
+        return None;
+    }
+
+    if value.starts_with("file://") {
+        return Some(value.to_string());
+    }
+
+    let mut candidate = PathBuf::from(value);
+    if candidate.is_relative() {
+        candidate = PathBuf::from(worktree.root_path()).join(candidate);
+    }
+
+    Some(path_to_uri(&candidate))
+}
