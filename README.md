@@ -135,7 +135,24 @@ brew install netcoredbg
    }
    ```
 
-4. **Start Editing**:
+4. **Configure Solution Path** (Optional):
+   - If you want to specify a custom solution path or if auto-detection doesn't work:
+   ```json
+   {
+     "language_servers": {
+       "roslyn": {
+         "enabled": true,
+         "initialization_options": {
+           "solution": "/absolute/path/to/your/solution.sln"
+         }
+       }
+     }
+   }
+   ```
+   - The path should be an absolute path to your `.sln`, `.slnx`, or `.slnf` file
+   - If not specified, the extension will attempt to auto-detect the solution file
+
+5. **Start Editing**:
    - Open any `.cs` file in your solution
    - The language server will initialize with your solution context
    - Full IDE features (go-to-definition, completions, etc.) should be available
@@ -245,6 +262,25 @@ dotnet tool install --global Microsoft.CodeAnalysis.LanguageServer
 
 The wrapper will automatically detect and use the manually installed version instead of downloading.
 
+### Using a Custom Roslyn Installation
+
+You can override the Roslyn LSP path using the `ROSLYN_LSP_PATH` environment variable:
+
+```bash
+# Set the path to your custom Roslyn installation
+export ROSLYN_LSP_PATH=/path/to/custom/Microsoft.CodeAnalysis.LanguageServer
+
+# Or on Windows
+set ROSLYN_LSP_PATH=C:\path\to\custom\Microsoft.CodeAnalysis.LanguageServer.exe
+```
+
+This is useful for:
+- Testing a specific Roslyn version
+- Using a locally built Roslyn from source
+- Debugging Roslyn issues
+
+The wrapper will use this path instead of downloading or searching for Roslyn.
+
 ### Check Wrapper Logs
 
 The wrapper outputs diagnostic information to stderr. View Zed's logs to see wrapper output:
@@ -255,23 +291,29 @@ The wrapper outputs diagnostic information to stderr. View Zed's logs to see wra
 
 ### No Solution File Detected
 
-The extension looks for `.sln`, `.slnx`, or `.slnf` files in the workspace root. Ensure:
-- Your solution file is in the root directory of the workspace
-- The filename matches one of the expected patterns
+The extension looks for `.sln`, `.slnx`, or `.slnf` files in the workspace root. If auto-detection doesn't work:
 
-If your solution file has a non-standard name (e.g., `MySolution.sln`), you can manually specify it in Zed settings:
+1. **Manually specify the solution path** in Zed settings (`Cmd+,` / `Ctrl+,`):
 
 ```json
 {
   "language_servers": {
     "roslyn": {
       "initialization_options": {
-        "solution": "file:///path/to/MySolution.sln"
+        "solution": "/absolute/path/to/your/solution.sln"
       }
     }
   }
 }
 ```
+
+**Important Notes:**
+- Use an **absolute path** to your solution file
+- The path must point to an existing `.sln`, `.slnx`, or `.slnf` file
+- On Windows, use forward slashes: `C:/Projects/MySolution.sln`
+- The setting takes priority over auto-detection
+
+2. **Verify the solution file exists** at the specified path
 
 ### Limited Features Without Solution
 
