@@ -96,10 +96,21 @@ where roslyn-wrapper
 
 If not found, ensure it's installed and added to your PATH.
 
-### Debugger (Optional)
+### Debugger (Auto-Downloads)
 
-For debugging support, install netcoredbg:
+The extension includes **automatic netcoredbg installation**. When you start a debug session:
+1. The extension checks if netcoredbg is already cached
+2. If not found, it downloads the appropriate version for your platform from GitHub
+3. Extracts it to the extension cache directory
+4. Starts the debugger automatically
 
+**No manual installation required!** The debugger will be downloaded on first use.
+
+**Cache Location:**
+- Linux/macOS: `~/.cache/zed/extensions/csharp_roslyn/cache/netcoredbg/{version}/`
+- Windows: `%LOCALAPPDATA%\Zed\extensions\csharp_roslyn\cache\netcoredbg\{version}\`
+
+**Optional**: If you prefer to use a globally installed netcoredbg:
 ```bash
 # macOS with Homebrew
 brew install netcoredbg
@@ -156,6 +167,163 @@ brew install netcoredbg
    - Open any `.cs` file in your solution
    - The language server will initialize with your solution context
    - Full IDE features (go-to-definition, completions, etc.) should be available
+
+## Debugging
+
+The extension provides debugging support via netcoredbg, which is automatically downloaded on first use.
+
+### Quick Start
+
+1. **Create a debug configuration** in `.zed/debug.json` at your project root:
+
+```json
+[
+  {
+    "label": "Debug My App",
+    "adapter": "netcoredbg",
+    "config": {
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/Debug/net9.0/MyApp.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    },
+    "build": {
+      "command": "dotnet",
+      "args": ["build"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+]
+```
+
+2. **Start debugging**:
+   - Open the Debug panel in Zed
+   - Select your debug configuration
+   - Click the play button or press the debug keybinding
+
+### Debug Configuration Reference
+
+netcoredbg supports the following configuration options:
+
+#### Required Fields
+- `request`: Either `"launch"` (start new process) or `"attach"` (attach to existing)
+- `program`: Path to the .NET DLL to debug (e.g., `"bin/Debug/net9.0/MyApp.dll"`)
+
+#### Optional Fields
+- `args`: Array of command-line arguments for the program
+- `cwd`: Working directory (defaults to `${workspaceFolder}`)
+- `env`: Object with environment variables (e.g., `{"VAR": "value"}`)
+- `stopAtEntry`: Set to `true` to break at program entry point (default: `false`)
+- `console`: Where to launch the debug target:
+  - `"internalConsole"` (default) - in Zed's integrated console
+  - `"integratedTerminal"` - in Zed's terminal
+  - `"externalTerminal"` - in system terminal
+- `justMyCode`: Only debug user code, skip framework code (default: `true`)
+- `enableStepFiltering`: Skip over properties and operators (default: `true`)
+
+#### Attach Configuration
+For attaching to an existing process:
+```json
+{
+  "request": "attach",
+  "processId": 1234
+}
+```
+
+### Build Tasks
+
+The `build` field in debug configurations is optional but recommended. It tells Zed to run a build command before starting the debugger:
+
+```json
+"build": {
+  "command": "dotnet",
+  "args": ["build", "--configuration", "Debug"],
+  "cwd": "${workspaceFolder}"
+}
+```
+
+Without a build task, ensure your program is already built before debugging.
+
+### Example Configurations
+
+**Simple Console App:**
+```json
+{
+  "label": "Debug Console App",
+  "adapter": "netcoredbg",
+  "config": {
+    "request": "launch",
+    "program": "${workspaceFolder}/bin/Debug/net9.0/ConsoleApp.dll",
+    "cwd": "${workspaceFolder}"
+  },
+  "build": {
+    "command": "dotnet",
+    "args": ["build"]
+  }
+}
+```
+
+**With Arguments and Environment:**
+```json
+{
+  "label": "Debug with Args",
+  "adapter": "netcoredbg",
+  "config": {
+    "request": "launch",
+    "program": "${workspaceFolder}/bin/Debug/net9.0/MyApp.dll",
+    "args": ["--verbose", "input.txt"],
+    "env": {
+      "ASPNETCORE_ENVIRONMENT": "Development",
+      "LOG_LEVEL": "Debug"
+    },
+    "cwd": "${workspaceFolder}"
+  }
+}
+```
+
+**Stop at Entry:**
+```json
+{
+  "label": "Debug (Break at Start)",
+  "adapter": "netcoredbg",
+  "config": {
+    "request": "launch",
+    "program": "${workspaceFolder}/bin/Debug/net9.0/MyApp.dll",
+    "stopAtEntry": true
+  },
+  "build": {
+    "command": "dotnet",
+    "args": ["build"]
+  }
+}
+```
+
+### Debugging Tips
+
+1. **Set Breakpoints**: Click in the gutter (left of line numbers) to set breakpoints
+2. **Inspect Variables**: Hover over variables to see their values
+3. **Watch Expressions**: Add expressions to the watch panel
+4. **Step Through Code**: Use step over/into/out controls
+5. **View Call Stack**: See the full call stack in the debug panel
+
+### Troubleshooting Debugging
+
+**Debugger Won't Start:**
+- Check that the `program` path is correct and the DLL exists
+- Verify the build completed successfully
+- Ensure the target framework matches your .NET installation
+
+**Can't Hit Breakpoints:**
+- Ensure you're building in Debug configuration (not Release)
+- Check that the source code matches the built DLL
+- Try setting `"justMyCode": false` to debug into framework code
+
+**Check Debugger Logs:**
+- View Zed's logs: `Help → View Logs`
+- Look for lines starting with `[netcoredbg]`
+- The debugger runs with `--interpreter=vscode` flag for DAP compatibility
 
 ## Architecture
 
@@ -324,6 +492,27 @@ If no solution file is detected, Roslyn falls back to `.csproj` files in the wor
 
 To enable full features, place a `.sln` file in your workspace root.
 
+### Debugging Issues
+
+**Debugger Auto-Download Fails:**
+The extension automatically downloads netcoredbg from GitHub on first use. If this fails:
+- Check your internet connection
+- Verify you can access: https://github.com/marcptrs/netcoredbg/releases
+- Manually install netcoredbg and add to PATH (see Prerequisites)
+- Check extension logs: `Help → View Logs`
+
+**Debug Configurations Not Working:**
+- Verify `.zed/debug.json` exists in your project root
+- Check that `program` path points to an existing DLL
+- Ensure the build task completes successfully
+- Review the debug configuration schema at: `debug_adapter_schemas/netcoredbg.json`
+
+**netcoredbg Not Found:**
+The extension downloads netcoredbg automatically. If you see "not found" errors:
+- Delete the cache directory to force re-download
+- Manually install netcoredbg and ensure it's in PATH
+- Check file permissions on the cached binary
+
 ### Debugging Not Working
 
 Ensure netcoredbg is installed and in your PATH:
@@ -333,7 +522,7 @@ which netcoredbg  # Linux/macOS
 where netcoredbg  # Windows
 ```
 
-If not found, install using the methods listed in the Prerequisites section.
+If not found, the extension will automatically download it on first debug session. If auto-download fails, install manually using the methods listed in the Prerequisites section.
 
 ## Development
 
