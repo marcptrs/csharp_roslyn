@@ -1,7 +1,7 @@
 id = "csharp_roslyn"
 name = "C# (Roslyn)"
 description = "C# support via Roslyn Language Server & netcoredbg"
-version = "0.0.2"
+version = "0.0.3"
 schema_version = 1
 authors = ["Marc Peters <marc@peters.casa>"]
 repository = "https://github.com/marcptrs/csharp-roslyn"
