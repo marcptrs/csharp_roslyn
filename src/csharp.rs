@@ -22,19 +22,22 @@ impl zed::Extension for CsharpRoslynExtension {
 
     fn language_server_command(
         &mut self,
-        _language_server_id: &LanguageServerId,
+        language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        // Find the roslyn-wrapper binary
-        let (platform, _arch) = zed::current_platform();
-        let wrapper_path = find_roslyn_wrapper(platform, worktree)?;
+        let (platform, arch) = zed::current_platform();
+        
+        // Download wrapper (with progress reporting)
+        let wrapper_path = crate::wrapper_download::ensure_wrapper(language_server_id, platform, arch, worktree)?;
+        
+        // Download Roslyn LSP (with progress reporting)
+        let roslyn_path = crate::roslyn_download::ensure_roslyn(language_server_id, platform, arch, worktree)?;
 
-        // Run roslyn-wrapper (which will handle finding/downloading Roslyn)
-        let mut env = worktree.shell_env();
-        env.push(("ROSLYN_WRAPPER_CWD".into(), worktree.root_path()));
+        // Run wrapper with Roslyn binary path as argument
+        let env = worktree.shell_env();
         Ok(zed::Command {
             command: wrapper_path,
-            args: vec![],
+            args: vec![roslyn_path],
             env,
         })
     }
@@ -251,21 +254,6 @@ fn path_to_uri(path: impl AsRef<Path>) -> String {
         Ok(url) => url.into(),
         Err(_) => format!("file://{}", path.to_string_lossy().replace('\\', "/")),
     }
-}
-
-/// Find the roslyn-wrapper binary
-fn find_roslyn_wrapper(platform: zed::Os, worktree: &zed::Worktree) -> Result<String> {
-    let binary_name = match platform {
-        zed::Os::Windows => "roslyn-wrapper.exe",
-        _ => "roslyn-wrapper",
-    };
-
-    if let Some(path) = worktree.which(binary_name) {
-        return Ok(path);
-    }
-
-    // Zed bundles binaries alongside the extension contents under `roslyn-wrapper/`
-    Ok(format!("roslyn-wrapper/{}", binary_name))
 }
 
 fn resolve_solution_uri(value: &str, worktree: &zed::Worktree) -> Option<String> {
