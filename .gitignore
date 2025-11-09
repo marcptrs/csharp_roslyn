@@ -16,6 +16,13 @@ proxy/target/
 Cargo.lock
 
 #
+# Bundled binaries
+#
+
+roslyn-wrapper
+roslyn-wrapper.exe
+
+#
 # macOS
 #
 
