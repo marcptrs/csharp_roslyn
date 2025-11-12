@@ -1,7 +1,7 @@
 id = "csharp_roslyn"
 name = "C# (Roslyn)"
-description = "C# support via Roslyn Language Server & netcoredbg"
-version = "0.0.3"
+description = "C# support via OmniSharp-Roslyn & netcoredbg"
+version = "0.1.0"
 schema_version = 1
 authors = ["Marc Peters <marc@peters.casa>"]
 repository = "https://github.com/marcptrs/csharp-roslyn"
@@ -11,8 +11,8 @@ kind = "process:exec"
 command = "find"
 args = ["*", "-name", "*", "-type", "f"]
 
-[language_servers.roslyn]
-name = "Roslyn"
+[language_servers.omnisharp-roslyn]
+name = "OmniSharp-Roslyn"
 language = "CSharp"
 
 [debug_adapters.netcoredbg]

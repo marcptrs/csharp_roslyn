@@ -13,6 +13,8 @@ use zed_extension_api::{
 
 use crate::debugger;
 
+
+
 pub struct CsharpRoslynExtension;
 
 impl zed::Extension for CsharpRoslynExtension {
@@ -27,17 +29,31 @@ impl zed::Extension for CsharpRoslynExtension {
     ) -> Result<zed::Command> {
         let (platform, arch) = zed::current_platform();
         
-        // Download wrapper (with progress reporting)
-        let wrapper_path = crate::wrapper_download::ensure_wrapper(language_server_id, platform, arch, worktree)?;
-        
-        // Download Roslyn LSP (with progress reporting)
-        let roslyn_path = crate::roslyn_download::ensure_roslyn(language_server_id, platform, arch, worktree)?;
+        // Download OmniSharp-Roslyn (with progress reporting)
+        eprintln!("[csharp_roslyn] Ensuring OmniSharp is available");
+        let omnisharp_path = crate::omnisharp_download::ensure_omnisharp(
+            language_server_id, 
+            platform, 
+            arch, 
+            worktree
+        )?;
+        eprintln!("[csharp_roslyn] OmniSharp path: {}", omnisharp_path);
 
-        // Run wrapper with Roslyn binary path as argument
+        // Run OmniSharp in LSP mode
+        // OmniSharp will use the solution path from initialization_options
+        // or auto-detect based on the working directory (worktree root)
+        let root_path = worktree.root_path();
+        eprintln!("[csharp_roslyn] Worktree root: {}", root_path);
+        
         let env = worktree.shell_env();
+        
+        eprintln!("[csharp_roslyn] Starting OmniSharp with -lsp flag");
+        
         Ok(zed::Command {
-            command: wrapper_path,
-            args: vec![roslyn_path],
+            command: omnisharp_path,
+            args: vec![
+                "-lsp".to_string(),
+            ],
             env,
         })
     }
@@ -47,23 +63,38 @@ impl zed::Extension for CsharpRoslynExtension {
         _language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<Option<serde_json::Value>> {
+        // Build base initialization options with Roslyn extensions
+        let mut init_options = json!({
+            "RoslynExtensionsOptions": {
+                "enableDecompilationSupport": true,
+                "enableImportCompletion": true,
+                "enableAnalyzersSupport": true
+            }
+        });
+
         // Try to get solution path from settings first
         if let Some(solution_setting) = get_solution_path_from_settings(worktree) {
+            eprintln!("[csharp_roslyn] Found solution in settings: {}", solution_setting);
             if let Some(solution_uri) = resolve_solution_uri(&solution_setting, worktree) {
-                return Ok(Some(json!({ "solution": solution_uri })));
+                eprintln!("[csharp_roslyn] Resolved solution URI: {}", solution_uri);
+                init_options["solution"] = json!(solution_uri);
+                return Ok(Some(init_options));
             }
         }
 
         // Fallback: try to auto-detect solution
         if let Some(solution_path) = find_solution(worktree) {
+            eprintln!("[csharp_roslyn] Auto-detected solution: {}", solution_path);
             if let Some(solution_uri) = resolve_solution_uri(&solution_path, worktree) {
-                return Ok(Some(json!({ "solution": solution_uri })));
+                eprintln!("[csharp_roslyn] Resolved solution URI: {}", solution_uri);
+                init_options["solution"] = json!(solution_uri);
+                return Ok(Some(init_options));
             }
         }
 
-        // No solution found - initialize without explicit solution
-        // and let the wrapper handle project discovery
-        Ok(Some(json!({})))
+        // Return initialization options even without solution
+        eprintln!("[csharp_roslyn] Returning init options with decompilation support enabled");
+        Ok(Some(init_options))
     }
 
     fn get_dap_binary(
@@ -184,18 +215,29 @@ impl zed::Extension for CsharpRoslynExtension {
         // For .NET debugging, we need to know the exact DLL path.
         // Try to infer it from the build task or use a generic path.
         
-        // Try to infer project name from build task
+        // Try to infer project path and name from build task
         let program = if let Some(project_arg) = build_task.args.iter()
             .find(|arg| arg.ends_with(".csproj")) {
-            // Extract project name from .csproj path
+            // Extract project directory and name from .csproj path
+            // e.g., "src/ConsoleApp/ConsoleApp.csproj" -> directory="src/ConsoleApp", name="ConsoleApp"
+            
+            // Get the parent directory path (everything before the .csproj filename)
+            let project_dir = if let Some(last_slash) = project_arg.rfind(['/', '\\']) {
+                &project_arg[..last_slash]
+            } else {
+                "."
+            };
+            
+            // Get the project name from the .csproj filename
             let project_name = project_arg
-                .trim_end_matches(".csproj")
                 .split(['/', '\\'])
                 .last()
+                .and_then(|s| s.strip_suffix(".csproj"))
                 .unwrap_or("app");
             
+            // Use forward slashes in the path template - Zed will normalize when expanding $ZED_WORKTREE_ROOT
             format!("$ZED_WORKTREE_ROOT/{}/bin/Debug/net9.0/{}.dll", 
-                project_name, project_name)
+                project_dir.replace('\\', "/"), project_name)
         } else {
             // Fallback to a generic path
             "$ZED_WORKTREE_ROOT/bin/Debug/net9.0/app.dll".to_string()
@@ -227,7 +269,7 @@ impl zed::Extension for CsharpRoslynExtension {
 
 /// Read solution path from user settings
 fn get_solution_path_from_settings(worktree: &zed::Worktree) -> Option<String> {
-    let settings = LspSettings::for_worktree("roslyn", worktree).ok()?;
+    let settings = LspSettings::for_worktree("omnisharp-roslyn", worktree).ok()?;
 
     // Try to get solution_path from settings
     if let Some(init_options) = settings.initialization_options {
@@ -241,9 +283,15 @@ fn get_solution_path_from_settings(worktree: &zed::Worktree) -> Option<String> {
     None
 }
 
-/// Attempt to detect a solution file in a minimal, API-compatible way.
-/// Currently returns None because Worktree doesn't support directory iteration.
-fn find_solution(_worktree: &zed::Worktree) -> Option<String> {
+/// Attempt to detect a solution file in the worktree root.
+/// Since we can't use std::fs in WASM, we return None to let OmniSharp auto-detect.
+fn find_solution(worktree: &zed::Worktree) -> Option<String> {
+    let root_path = worktree.root_path();
+    eprintln!("[csharp_roslyn] Cannot enumerate files in WASM sandbox");
+    eprintln!("[csharp_roslyn] Returning None - OmniSharp will auto-detect from working directory: {}", root_path);
+    
+    // Return None so OmniSharp auto-detects the solution from its working directory
+    // The working directory is correctly set to the worktree root by language_server_command
     None
 }
 
@@ -251,8 +299,17 @@ fn find_solution(_worktree: &zed::Worktree) -> Option<String> {
 fn path_to_uri(path: impl AsRef<Path>) -> String {
     let path = path.as_ref();
     match Url::from_file_path(path) {
-        Ok(url) => url.into(),
-        Err(_) => format!("file://{}", path.to_string_lossy().replace('\\', "/")),
+        Ok(url) => url.to_string(),
+        Err(_) => {
+            // Fallback: manually construct file URI with proper formatting
+            let path_str = path.to_string_lossy().replace('\\', "/");
+            // Ensure we have three slashes for absolute paths on Windows (file:///C:/...)
+            if path_str.starts_with('/') || path_str.chars().nth(1) == Some(':') {
+                format!("file:///{}", path_str.trim_start_matches('/'))
+            } else {
+                format!("file://{}", path_str)
+            }
+        }
     }
 }
 
