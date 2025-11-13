@@ -62,12 +62,8 @@ fn download_omnisharp(
         zed::DownloadedFileType::GzipTar
     };
 
-    zed::download_file(
-        &download_url,
-        &target_dir.to_string_lossy(),
-        file_type,
-    )
-    .map_err(|e| format!("Failed to download and extract OmniSharp: {}", e))?;
+    zed::download_file(&download_url, &target_dir.to_string_lossy(), file_type)
+        .map_err(|e| format!("Failed to download and extract OmniSharp: {}", e))?;
 
     Ok(())
 }
@@ -79,24 +75,24 @@ pub fn ensure_omnisharp(
     arch: zed::Architecture,
     worktree: &zed::Worktree,
 ) -> Result<String> {
-    eprintln!("[csharp_roslyn] ensure_omnisharp called");
+    if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] ensure_omnisharp called"); }
     let binary_name = get_binary_name(platform);
-    eprintln!("[csharp_roslyn] Binary name: {}", binary_name);
+    if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Binary name: {}", binary_name); }
 
     // First, check if OmniSharp is in PATH
     if let Some(path) = worktree.which(binary_name) {
-        eprintln!("[csharp_roslyn] Found OmniSharp in PATH: {}", path);
+        if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Found OmniSharp in PATH: {}", path); }
         return Ok(path);
     }
 
     // Check the cache directory
-    eprintln!("[csharp_roslyn] OmniSharp not in PATH, checking cache");
+    if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] OmniSharp not in PATH, checking cache"); }
     let cache_dir = get_omnisharp_cache_dir()?;
-    eprintln!("[csharp_roslyn] Cache dir: {:?}", cache_dir);
+    if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Cache dir: {:?}", cache_dir); }
     let version_dir = cache_dir.join(OMNISHARP_VERSION);
     let version_file = cache_dir.join("version.txt");
     let binary_path = version_dir.join(binary_name);
-    eprintln!("[csharp_roslyn] Binary path: {:?}", binary_path);
+    if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Binary path: {:?}", binary_path); }
 
     // Check if we already have this version cached
     let needs_download = if version_dir.exists() && version_file.exists() {
@@ -115,11 +111,11 @@ pub fn ensure_omnisharp(
         true
     };
 
-    eprintln!("[csharp_roslyn] Needs download: {}", needs_download);
-    
+    if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Needs download: {}", needs_download); }
+
     if needs_download {
         // Report downloading status
-        eprintln!("[csharp_roslyn] Starting download");
+        if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Starting download"); }
         zed::set_language_server_installation_status(
             language_server_id,
             &zed::LanguageServerInstallationStatus::Downloading,
@@ -127,27 +123,27 @@ pub fn ensure_omnisharp(
 
         // Clean up old version if it exists
         if version_dir.exists() {
-            eprintln!("[csharp_roslyn] Cleaning up old version");
+            if cfg!(debug_assertions) {             if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Cleaning up old version"); } }
             let _ = fs::remove_dir_all(&version_dir);
         }
 
-        eprintln!("[csharp_roslyn] Creating version directory");
+        if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Creating version directory"); }
         fs::create_dir_all(&version_dir)
             .map_err(|e| format!("Failed to create version directory: {}", e))?;
 
         let asset_name = get_platform_asset_name(platform, arch)?;
-        eprintln!("[csharp_roslyn] Asset name: {}", asset_name);
+        if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Asset name: {}", asset_name); }
 
-        eprintln!("[csharp_roslyn] Downloading OmniSharp");
+        if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Downloading OmniSharp"); }
         if let Err(e) = download_omnisharp(OMNISHARP_VERSION, &asset_name, &version_dir, platform) {
-            eprintln!("[csharp_roslyn] Download failed: {}", e);
+            if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Download failed: {}", e); }
             zed::set_language_server_installation_status(
                 language_server_id,
                 &zed::LanguageServerInstallationStatus::Failed(e.clone()),
             );
             return Err(e);
         }
-        eprintln!("[csharp_roslyn] Download completed");
+        if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Download completed"); }
 
         // Make the binary executable on Unix platforms
         if platform != zed::Os::Windows {
@@ -168,10 +164,7 @@ pub fn ensure_omnisharp(
 
     // Verify binary exists
     if !binary_path.exists() {
-        let error_msg = format!(
-            "OmniSharp binary not found at {}",
-            binary_path.display()
-        );
+        let error_msg = format!("OmniSharp binary not found at {}", binary_path.display());
         zed::set_language_server_installation_status(
             language_server_id,
             &zed::LanguageServerInstallationStatus::Failed(error_msg.clone()),

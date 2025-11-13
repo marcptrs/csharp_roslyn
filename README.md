@@ -102,7 +102,7 @@ Create `.zed/debug.json` in your project root:
     "label": "Debug MyApp",
     "adapter": "netcoredbg",
     "request": "launch",
-    "program": "$ZED_WORKTREE_ROOT/src/MyApp/bin/Debug/net9.0/MyApp.dll",
+    "program": "$ZED_WORKTREE_ROOT/src/MyApp/bin/Debug/{targetFramework}/MyApp.dll",
     "args": [],
     "cwd": "$ZED_WORKTREE_ROOT",
     "stopAtEntry": false,
@@ -110,6 +110,8 @@ Create `.zed/debug.json` in your project root:
   }
 ]
 ```
+
+**Note**: The `{targetFramework}` placeholder (e.g., `net8.0`, `net9.0`) is automatically detected from your `.csproj` file at debug time.
 
 ### Debug Configuration Options
 
@@ -127,7 +129,7 @@ Create `.zed/debug.json` in your project root:
   "label": "Debug with Args",
   "adapter": "netcoredbg",
   "request": "launch",
-  "program": "$ZED_WORKTREE_ROOT/bin/Debug/net9.0/MyApp.dll",
+  "program": "$ZED_WORKTREE_ROOT/bin/Debug/{targetFramework}/MyApp.dll",
   "args": ["--verbose", "input.txt"],
   "env": {
     "ASPNETCORE_ENVIRONMENT": "Development"

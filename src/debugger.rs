@@ -1,10 +1,11 @@
+use crate::project_info::DotNetProject;
 use std::path::{Path, PathBuf};
 use zed_extension_api::{self as zed, Command, Result, Worktree};
 
 const NETCOREDBG_VERSION: &str = "v3.1.2-1054";
 const NETCOREDBG_REPO: &str = "https://github.com/marcptrs/netcoredbg";
 
-pub fn ensure_debugger(_worktree: &Worktree) -> Result<Command> {
+pub fn ensure_debugger(worktree: &Worktree) -> Result<Command> {
     let cache_dir = get_debugger_cache_dir()?;
     let debugger_binary = cache_dir.join(get_debugger_binary_name());
 

@@ -3,17 +3,13 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 use url::Url;
 use zed_extension_api::{
-    self as zed,
-    settings::LspSettings,
-    LanguageServerId, Result,
-    DebugAdapterBinary, DebugTaskDefinition, StartDebuggingRequestArgumentsRequest,
-    DebugConfig, DebugScenario, DebugRequest, TaskTemplate,
-    StartDebuggingRequestArguments,
+    self as zed, settings::LspSettings, DebugAdapterBinary, DebugConfig, DebugRequest,
+    DebugScenario, DebugTaskDefinition, LanguageServerId, Result, StartDebuggingRequestArguments,
+    StartDebuggingRequestArgumentsRequest, TaskTemplate,
 };
 
 use crate::debugger;
-
-
+use crate::project_info::DotNetProject;
 
 pub struct CsharpRoslynExtension;
 
@@ -28,32 +24,50 @@ impl zed::Extension for CsharpRoslynExtension {
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let (platform, arch) = zed::current_platform();
-        
+
         // Download OmniSharp-Roslyn (with progress reporting)
-        eprintln!("[csharp_roslyn] Ensuring OmniSharp is available");
+        if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Ensuring OmniSharp is available"); }
         let omnisharp_path = crate::omnisharp_download::ensure_omnisharp(
-            language_server_id, 
-            platform, 
-            arch, 
-            worktree
+            language_server_id,
+            platform,
+            arch,
+            worktree,
         )?;
-        eprintln!("[csharp_roslyn] OmniSharp path: {}", omnisharp_path);
+        if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] OmniSharp path: {}", omnisharp_path); }
 
         // Run OmniSharp in LSP mode
         // OmniSharp will use the solution path from initialization_options
         // or auto-detect based on the working directory (worktree root)
         let root_path = worktree.root_path();
-        eprintln!("[csharp_roslyn] Worktree root: {}", root_path);
-        
-        let env = worktree.shell_env();
-        
-        eprintln!("[csharp_roslyn] Starting OmniSharp with -lsp flag");
-        
+        if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Worktree root: {}", root_path); }
+
+        let mut env = worktree.shell_env();
+        // Ensure DOTNET_ROOT and PATH come from the host environment so OmniSharp uses the same SDK/tools
+        fn set_env_var(env: &mut Vec<(String, String)>, key: &str, value: String) {
+            for (k, v) in env.iter_mut() {
+                if k == key {
+                    *v = value;
+                    return;
+                }
+            }
+            env.push((key.to_string(), value));
+        }
+        if let Ok(host_dotnet_root) = std::env::var("DOTNET_ROOT") {
+            if !host_dotnet_root.is_empty() {
+                set_env_var(&mut env, "DOTNET_ROOT", host_dotnet_root);
+            }
+        }
+        if let Ok(host_path) = std::env::var("PATH") {
+            if !host_path.is_empty() {
+                set_env_var(&mut env, "PATH", host_path);
+            }
+        }
+
+        if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Starting OmniSharp with -lsp flag"); }
+
         Ok(zed::Command {
             command: omnisharp_path,
-            args: vec![
-                "-lsp".to_string(),
-            ],
+            args: vec!["-lsp".to_string()],
             env,
         })
     }
@@ -74,9 +88,9 @@ impl zed::Extension for CsharpRoslynExtension {
 
         // Try to get solution path from settings first
         if let Some(solution_setting) = get_solution_path_from_settings(worktree) {
-            eprintln!("[csharp_roslyn] Found solution in settings: {}", solution_setting);
+            if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Found solution in settings: {}", solution_setting); }
             if let Some(solution_uri) = resolve_solution_uri(&solution_setting, worktree) {
-                eprintln!("[csharp_roslyn] Resolved solution URI: {}", solution_uri);
+                if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Resolved solution URI: {}", solution_uri); }
                 init_options["solution"] = json!(solution_uri);
                 return Ok(Some(init_options));
             }
@@ -84,16 +98,16 @@ impl zed::Extension for CsharpRoslynExtension {
 
         // Fallback: try to auto-detect solution
         if let Some(solution_path) = find_solution(worktree) {
-            eprintln!("[csharp_roslyn] Auto-detected solution: {}", solution_path);
+            if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Auto-detected solution: {}", solution_path); }
             if let Some(solution_uri) = resolve_solution_uri(&solution_path, worktree) {
-                eprintln!("[csharp_roslyn] Resolved solution URI: {}", solution_uri);
+                if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Resolved solution URI: {}", solution_uri); }
                 init_options["solution"] = json!(solution_uri);
                 return Ok(Some(init_options));
             }
         }
 
         // Return initialization options even without solution
-        eprintln!("[csharp_roslyn] Returning init options with decompilation support enabled");
+        if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Returning init options with decompilation support enabled"); }
         Ok(Some(init_options))
     }
 
@@ -109,21 +123,68 @@ impl zed::Extension for CsharpRoslynExtension {
         }
 
         let command = debugger::ensure_debugger(worktree)?;
-        
+
         // Parse the config JSON to get the request type
-        let config_json: serde_json::Value = serde_json::from_str(&config.config)
+        let mut config_json: serde_json::Value = serde_json::from_str(&config.config)
             .map_err(|e| format!("Failed to parse config: {}", e))?;
-        
+
         let request_type = config_json
             .get("request")
             .and_then(|v| v.as_str())
             .unwrap_or("launch");
-        
+
         let request = match request_type {
             "attach" => StartDebuggingRequestArgumentsRequest::Attach,
             _ => StartDebuggingRequestArgumentsRequest::Launch,
         };
-        
+
+        // If the configuration contains a program path with $TARGET_FRAMEWORK placeholder,
+        // resolve it by reading the corresponding .csproj file to get the actual target framework.
+        // Note: Zed has already expanded $ZED_WORKTREE_ROOT to the full path at this point.
+        if let Some(program_value) = config_json.get_mut("program") {
+            if let Some(program_str) = program_value.as_str() {
+                // Check if the path contains our $TARGET_FRAMEWORK placeholder
+                if program_str.contains("$TARGET_FRAMEWORK") && program_str.contains("/bin/Debug/") {
+                    // Extract the worktree root
+                    let worktree_root = worktree.root_path();
+                    
+                    // Convert absolute path to relative by removing the worktree root
+                    let rel = if program_str.starts_with(&worktree_root) {
+                        program_str.trim_start_matches(&worktree_root).trim_start_matches('/')
+                    } else {
+                        program_str
+                    };
+                    
+                    // Parse the path: src/ConsoleApp/bin/Debug/$TARGET_FRAMEWORK/ConsoleApp.dll
+                    let parts: Vec<&str> = rel.split('/').collect();
+                    if let Some(bin_idx) = parts.iter().position(|p| *p == "bin") {
+                        // project_dir is everything before the 'bin' segment
+                        let project_dir = if bin_idx == 0 { ".".to_string() } else { parts[..bin_idx].join("/") };
+
+                        // guess assembly name from file name
+                        if let Some(file_name) = parts.last() {
+                            if let Some((name, _ext)) = file_name.split_once('.') {
+                                // Try to read {project_dir}/{name}.csproj
+                                let csproj_path = if project_dir == "." {
+                                    format!("{}.csproj", name)
+                                } else {
+                                    format!("{}/{}.csproj", project_dir, name)
+                                };
+
+                                if let Ok(text) = worktree.read_text_file(&csproj_path) {
+                                    let proj = DotNetProject::from_csproj_text(&text, std::path::Path::new(&csproj_path));
+                                    
+                                    // Replace $TARGET_FRAMEWORK with the actual value
+                                    let new_program = program_str.replace("$TARGET_FRAMEWORK", &proj.target_framework);
+                                    *program_value = serde_json::Value::String(new_program);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(DebugAdapterBinary {
             command: Some(command.command),
             arguments: command.args,
@@ -131,7 +192,7 @@ impl zed::Extension for CsharpRoslynExtension {
             cwd: None,
             connection: None,
             request_args: StartDebuggingRequestArguments {
-                configuration: config.config,
+                configuration: serde_json::to_string(&config_json).map_err(|e| format!("Failed to serialize modified config: {e}"))?,
                 request,
             },
         })
@@ -154,10 +215,7 @@ impl zed::Extension for CsharpRoslynExtension {
         }
     }
 
-    fn dap_config_to_scenario(
-        &mut self,
-        config: DebugConfig,
-    ) -> Result<DebugScenario, String> {
+    fn dap_config_to_scenario(&mut self, config: DebugConfig) -> Result<DebugScenario, String> {
         // Extract launch request details
         let (program, args, cwd, envs) = match &config.request {
             DebugRequest::Launch(launch) => (
@@ -203,46 +261,54 @@ impl zed::Extension for CsharpRoslynExtension {
 
         // Only create debug scenarios for "run" related tasks
         // Check if this is a dotnet run/watch command
-        let is_run_task = build_task.command.contains("dotnet") && 
-            (build_task.command.contains("run") || 
-             build_task.command.contains("watch") ||
-             build_task.args.iter().any(|arg| arg == "run" || arg == "watch"));
-        
+        let is_run_task = build_task.command.contains("dotnet")
+            && (build_task.command.contains("run")
+                || build_task.command.contains("watch")
+                || build_task
+                    .args
+                    .iter()
+                    .any(|arg| arg == "run" || arg == "watch"));
+
         if !is_run_task {
             return None;
         }
 
         // For .NET debugging, we need to know the exact DLL path.
         // Try to infer it from the build task or use a generic path.
-        
+
         // Try to infer project path and name from build task
-        let program = if let Some(project_arg) = build_task.args.iter()
-            .find(|arg| arg.ends_with(".csproj")) {
+        let program = if let Some(project_arg) =
+            build_task.args.iter().find(|arg| arg.ends_with(".csproj"))
+        {
             // Extract project directory and name from .csproj path
             // e.g., "src/ConsoleApp/ConsoleApp.csproj" -> directory="src/ConsoleApp", name="ConsoleApp"
-            
+
             // Get the parent directory path (everything before the .csproj filename)
             let project_dir = if let Some(last_slash) = project_arg.rfind(['/', '\\']) {
                 &project_arg[..last_slash]
             } else {
                 "."
             };
-            
+
             // Get the project name from the .csproj filename
             let project_name = project_arg
                 .split(['/', '\\'])
                 .last()
                 .and_then(|s| s.strip_suffix(".csproj"))
                 .unwrap_or("app");
-            
+
             // Use forward slashes in the path template - Zed will normalize when expanding $ZED_WORKTREE_ROOT
-            format!("$ZED_WORKTREE_ROOT/{}/bin/Debug/net9.0/{}.dll", 
-                project_dir.replace('\\', "/"), project_name)
+            // NOTE: The target framework placeholder will be resolved by get_dap_binary at debug time
+            format!(
+                "$ZED_WORKTREE_ROOT/{}/bin/Debug/$TARGET_FRAMEWORK/{}.dll",
+                project_dir.replace('\\', "/"),
+                project_name
+            )
         } else {
-            // Fallback to a generic path
-            "$ZED_WORKTREE_ROOT/bin/Debug/net9.0/app.dll".to_string()
+            // Fallback to a generic path (will be resolved by get_dap_binary)
+            "$ZED_WORKTREE_ROOT/bin/Debug/$TARGET_FRAMEWORK/app.dll".to_string()
         };
-        
+
         let mut config = json!({
             "request": "launch",
             "program": program,
@@ -287,9 +353,12 @@ fn get_solution_path_from_settings(worktree: &zed::Worktree) -> Option<String> {
 /// Since we can't use std::fs in WASM, we return None to let OmniSharp auto-detect.
 fn find_solution(worktree: &zed::Worktree) -> Option<String> {
     let root_path = worktree.root_path();
-    eprintln!("[csharp_roslyn] Cannot enumerate files in WASM sandbox");
-    eprintln!("[csharp_roslyn] Returning None - OmniSharp will auto-detect from working directory: {}", root_path);
-    
+    if cfg!(debug_assertions) { eprintln!("[csharp_roslyn] Cannot enumerate files in WASM sandbox"); }
+    if cfg!(debug_assertions) { eprintln!(
+        "[csharp_roslyn] Returning None - OmniSharp will auto-detect from working directory: {}",
+        root_path
+    ); }
+
     // Return None so OmniSharp auto-detects the solution from its working directory
     // The working directory is correctly set to the worktree root by language_server_command
     None
