@@ -1,6 +1,7 @@
-use crate::project_info::DotNetProject;
 use std::path::{Path, PathBuf};
 use zed_extension_api::{self as zed, Command, Result, Worktree};
+
+use crate::logging::debug_log;
 
 const NETCOREDBG_VERSION: &str = "v3.1.2-1054";
 const NETCOREDBG_REPO: &str = "https://github.com/marcptrs/netcoredbg";
@@ -10,7 +11,7 @@ pub fn ensure_debugger(worktree: &Worktree) -> Result<Command> {
     let debugger_binary = cache_dir.join(get_debugger_binary_name());
 
     if !debugger_binary.exists() {
-        download_and_extract_debugger(&cache_dir)?;
+        download_and_extract_debugger(&cache_dir, worktree)?;
     }
 
     let absolute_path = if debugger_binary.is_absolute() {
@@ -60,7 +61,7 @@ fn get_platform_suffix() -> Result<String> {
     Ok(platform.to_string())
 }
 
-fn download_and_extract_debugger(cache_dir: &Path) -> Result<()> {
+fn download_and_extract_debugger(cache_dir: &Path, worktree: &Worktree) -> Result<()> {
     let platform = get_platform_suffix()?;
     let is_windows = cfg!(target_os = "windows");
     let (archive_name, file_type) = if is_windows {
@@ -79,7 +80,7 @@ fn download_and_extract_debugger(cache_dir: &Path) -> Result<()> {
         NETCOREDBG_REPO, NETCOREDBG_VERSION, archive_name
     );
 
-    eprintln!("Attempting to download netcoredbg from: {}", download_url);
+    debug_log!(worktree, "[csharp_roslyn] Attempting to download netcoredbg from: {download_url}");
 
     let cache_dir_str = cache_dir.to_string_lossy().to_string();
     zed::download_file(&download_url, &cache_dir_str, file_type)

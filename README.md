@@ -8,6 +8,7 @@ A Zed editor extension providing C# language support via OmniSharp-Roslyn and ne
 - Diagnostics and code analysis
 - Solution file detection (.sln, .slnx, .slnf)
 - MSBuild integration
+- **Unity project support** - automatic detection and configuration
 - Debugging support via netcoredbg
 - Auto-downloads OmniSharp-Roslyn and netcoredbg on first use
 - Supports custom OmniSharp installations via PATH
@@ -33,6 +34,15 @@ To install:
 ### Basic Usage
 
 The extension works out of the box! Simply open a C# project with a `.sln` file and start coding.
+
+### Unity Projects
+
+For Unity projects, see [Unity Support Guide](UNITY-SUPPORT.md) for setup instructions.
+
+**Quick start:**
+1. Generate project files in Unity: `Edit → Preferences → External Script Editor` → "Regenerate project files"
+2. Open Unity project folder in Zed
+3. Extension automatically detects Unity projects and configures OmniSharp appropriately
 
 ### Optional: Specify Solution Path
 
@@ -140,11 +150,37 @@ Create `.zed/debug.json` in your project root:
 
 ## Troubleshooting
 
+### Debug Logging
+
+For detailed troubleshooting information, enable debug logging in your Zed settings:
+
+```json
+{
+  "lsp": {
+    "csharp_roslyn": {
+      "initialization_options": {
+        "enable_debug_logging": true
+      }
+    }
+  }
+}
+```
+
+Debug messages appear in the terminal when running Zed with `zed . --foreground`. Extension logs do not appear in Zed's main log file due to WASM sandbox limitations.
+
+Messages are prefixed with `[csharp_roslyn]` and show:
+- Unity project detection status
+- Solution file discovery attempts  
+- OmniSharp download progress
+- Debugger setup steps
+- Configuration decisions
+
 ### Language Server Won't Start
 
 - Extension auto-downloads OmniSharp-Roslyn on first use
 - Cache location: `~/.cache/zed/extensions/csharp_roslyn/cache/` (Linux/macOS) or `%LOCALAPPDATA%\Zed\extensions\csharp_roslyn\cache\` (Windows)
-- Check logs: `Help → View Logs` in Zed
+- Enable debug logging (above) for detailed diagnostics
+- Check terminal output when running with `zed . --foreground` for debug messages
 - Manually download from: https://github.com/OmniSharp/omnisharp-roslyn/releases
 
 ### Debugger Issues
@@ -152,6 +188,7 @@ Create `.zed/debug.json` in your project root:
 - Extension auto-downloads netcoredbg on first use
 - Verify `program` path exists and build completed successfully
 - Ensure Debug configuration (not Release)
+- Enable debug logging (above) for detailed diagnostics
 - Check logs: `Help → View Logs`
 
 ### No Solution File Detected
