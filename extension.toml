@@ -6,13 +6,6 @@ schema_version = 1
 authors = ["Marc Peters <marc@peters.casa>"]
 repository = "https://github.com/marcptrs/csharp-roslyn"
 
-[settings]
-enable_debug_logging = { 
-  description = "Enable debug logging for troubleshooting. Add to LSP settings under initialization_options.", 
-  type = "boolean", 
-  default = false 
-}
-
 [[capabilities]]
 kind = "process:exec"
 command = "find"
