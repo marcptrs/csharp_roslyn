@@ -3,7 +3,7 @@
 A Zed extension for C# with:
 
 - **Roslyn language server** as the preferred backend
-- **OmniSharp** as a compatibility fallback
+- **OmniSharp-Roslyn** as a compatibility fallback
 - **netcoredbg** for debugging
 
 ## Current backend strategy
@@ -11,17 +11,19 @@ A Zed extension for C# with:
 This extension supports both language servers:
 
 - **Roslyn** (`roslyn-language-server`) is preferred when a **.NET 10+ runtime** is available.
-- **OmniSharp** is selected automatically for Unity projects or when .NET 10+ is not detected.
+- **OmniSharp-Roslyn** is selected automatically for Unity projects or when .NET 10+ is not detected.
 - A configured custom Roslyn binary is always honored.
+
+`omnisharp` in settings refers to **OmniSharp-Roslyn** (`OmniSharp/omnisharp-roslyn`), which is Roslyn-based internally but different from `roslyn-language-server`.
 
 ## Features
 
 - Completion, hover, go to definition, find references, rename
 - Diagnostics and analyzers
 - Roslyn workspace configuration support
-- Unity-oriented OmniSharp fallback
+- Unity-oriented OmniSharp-Roslyn fallback
 - Debugging via `netcoredbg`
-- Automatic download of Roslyn/OmniSharp/netcoredbg when needed (platform-aware source selection)
+- Automatic download of Roslyn/OmniSharp-Roslyn/netcoredbg when needed (platform-aware source selection)
 - Support for custom language server binaries in Zed settings
 
 ## Semantic highlighting
@@ -47,7 +49,7 @@ Use `"combined"` if you want tree-sitter highlighting with semantic overlays.
 Notes:
 
 - **Roslyn** is the preferred backend for semantic highlighting work.
-- **OmniSharp** remains a compatibility path and may not match Roslyn's behavior.
+- **OmniSharp-Roslyn** remains a compatibility path and may not match `roslyn-language-server` behavior.
 - If highlighting does not update after changing this setting, run `lsp: restart language servers`.
 
 ## Installation
@@ -76,7 +78,7 @@ You can configure language-server priority for C#:
 }
 ```
 
-To prefer OmniSharp explicitly:
+To prefer OmniSharp-Roslyn explicitly:
 
 ```json
 {
@@ -88,7 +90,7 @@ To prefer OmniSharp explicitly:
 }
 ```
 
-Even when `roslyn` is preferred, this extension may still fall back to OmniSharp automatically when Roslyn is not usable on the host.
+Even when `roslyn` is preferred, this extension may still fall back to OmniSharp-Roslyn automatically when Roslyn is not usable on the host.
 
 ### Roslyn settings
 
@@ -135,9 +137,9 @@ If you installed `roslyn-language-server` yourself, you can point Zed to it:
 
 This is useful if you want to manage the Roslyn server outside the extension.
 
-### OmniSharp settings
+### OmniSharp-Roslyn settings
 
-OmniSharp configuration goes under `lsp.omnisharp`.
+OmniSharp-Roslyn configuration goes under `lsp.omnisharp`.
 
 To set a solution path:
 
@@ -153,7 +155,7 @@ To set a solution path:
 }
 ```
 
-To use a custom OmniSharp binary:
+To use a custom OmniSharp-Roslyn binary:
 
 ```json
 {
@@ -170,7 +172,7 @@ To use a custom OmniSharp binary:
 
 ### Unity projects
 
-Unity currently routes through OmniSharp.
+Unity currently routes through OmniSharp-Roslyn.
 
 See [UNITY-SUPPORT.md](UNITY-SUPPORT.md) for details.
 
@@ -248,10 +250,10 @@ Logs appear in the terminal when running Zed in the foreground.
 Common causes:
 
 - No **.NET 10+ runtime** is installed.
-- A Unity project was detected, so the extension intentionally fell back to OmniSharp.
+- A Unity project was detected, so the extension intentionally fell back to OmniSharp-Roslyn.
 - The custom Roslyn binary path is invalid.
 
-In these cases, the extension should usually fall back to OmniSharp automatically.
+In these cases, the extension should usually fall back to OmniSharp-Roslyn automatically.
 When debug logging is enabled, the extension now logs the backend decision explicitly.
 
 ### Semantic highlighting not appearing
@@ -269,7 +271,7 @@ If you see startup errors (for example `configurationDone` failures), try:
   - `~/Library/Application Support/Zed/extensions/work/csharp_roslyn/cache/netcoredbg`
 - Restart Zed and retry.
 
-### No solution detected for OmniSharp
+### No solution detected for OmniSharp-Roslyn
 
 The extension first checks `lsp.omnisharp.initialization_options.solution`, then tries a simple heuristic for `<workspace-name>.sln`, `.slnx`, or `.slnf` in the workspace root.
 
@@ -311,6 +313,6 @@ cp target/wasm32-wasip2/debug/csharp_roslyn.wasm ~/Library/Application\ Support/
 
 - Roslyn language server: https://raw.githubusercontent.com/dotnet/roslyn/refs/heads/main/src/LanguageServer/Microsoft.CodeAnalysis.LanguageServer/README.md
 - Zed C# language docs: ../zed/docs/src/languages/csharp.md
-- OmniSharp: https://github.com/OmniSharp/omnisharp-roslyn
+- OmniSharp-Roslyn: https://github.com/OmniSharp/omnisharp-roslyn
 - netcoredbg (official): https://github.com/Samsung/netcoredbg
 - netcoredbg (macOS arm64 release pipeline): https://github.com/marcptrs/netcoredbg
