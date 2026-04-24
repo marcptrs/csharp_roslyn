@@ -16,21 +16,25 @@ pub enum OutputType {
 #[derive(Debug, Clone)]
 pub struct DotNetProject {
     pub target_framework: String,
+    #[allow(dead_code)]
     pub assembly_name: String,
+    #[allow(dead_code)]
     pub output_type: OutputType,
+    #[allow(dead_code)]
     pub project_path: PathBuf,
 }
 
 impl DotNetProject {
     pub fn from_csproj_text(text: &str, project_path: &Path) -> Self {
         let target_framework =
-            extract_first_of_tags(text, &["TargetFramework", "TargetFrameworks"])
-                .unwrap_or_else(|| {
+            extract_first_of_tags(text, &["TargetFramework", "TargetFrameworks"]).unwrap_or_else(
+                || {
                     // Fallback: Try to detect .NET SDK version or use latest LTS (net8.0)
                     // In practice, if TargetFramework is missing, the project is likely invalid,
                     // but we provide a reasonable default.
                     "net8.0".to_string()
-                });
+                },
+            );
 
         let assembly_name = extract_first_of_tags(text, &["AssemblyName"]).unwrap_or_else(|| {
             project_path
@@ -67,6 +71,7 @@ impl DotNetProject {
     }
 
     /// Get the expected output path for a built assembly for the given configuration (Debug/Release).
+    #[allow(dead_code)]
     pub fn get_output_path(&self, configuration: &str) -> PathBuf {
         let ext = match self.output_type {
             OutputType::Exe | OutputType::WinExe => "exe",
@@ -102,20 +107,20 @@ fn extract_tag_value(text: &str, tag: &str) -> Option<String> {
     // whitespace and attributes (it ignores attributes).
 
     // Search for opening tag like <Tag> or <Tag
-    let open1 = format!("<{}>", tag);
+    let open1 = format!("<{tag}>");
     if let Some(start) = text.find(&open1) {
-        if let Some(end) = text[start + open1.len()..].find(&format!("</{}>", tag)) {
+        if let Some(end) = text[start + open1.len()..].find(&format!("</{tag}>")) {
             let val = &text[start + open1.len()..start + open1.len() + end];
             return Some(val.trim().to_string());
         }
     }
 
     // Try variant with attributes: e.g. <Tag Condition="...">value</Tag>
-    let open_prefix = format!("<{} ", tag);
+    let open_prefix = format!("<{tag} ");
     if let Some(start) = text.find(&open_prefix) {
         if let Some(close_gt) = text[start..].find('>') {
             let inner_start = start + close_gt + 1;
-            if let Some(end_tag) = text[inner_start..].find(&format!("</{}>", tag)) {
+            if let Some(end_tag) = text[inner_start..].find(&format!("</{tag}>")) {
                 let val = &text[inner_start..inner_start + end_tag];
                 return Some(val.trim().to_string());
             }
@@ -133,27 +138,35 @@ fn extract_tag_value(text: &str, tag: &str) -> Option<String> {
 /// 3. Uses read_text_file since directory enumeration isn't available in WASM
 pub fn is_unity_project(worktree: &zed::Worktree) -> bool {
     let root_path = worktree.root_path();
-    
+
     // Check for Assets directory by trying to read a known file
     // Unity projects typically have Assets/csc.rsp or similar files
-    let has_assets = worktree.read_text_file("Assets/csc.rsp").is_ok() ||
-                    worktree.read_text_file("Assets/mcs.rsp").is_ok();
-    
+    let has_assets = worktree.read_text_file("Assets/csc.rsp").is_ok()
+        || worktree.read_text_file("Assets/mcs.rsp").is_ok();
+
     // Check for ProjectSettings by trying to read ProjectVersion.txt
-    let has_project_settings = worktree.read_text_file("ProjectSettings/ProjectVersion.txt").is_ok();
-    
+    let has_project_settings = worktree
+        .read_text_file("ProjectSettings/ProjectVersion.txt")
+        .is_ok();
+
     // Unity project confirmed if we have ProjectSettings (strong indicator)
     if has_project_settings {
-        debug_log!(worktree, "[csharp_roslyn] Unity project detected at: {root_path}");
+        debug_log!(
+            worktree,
+            "[csharp_roslyn] Unity project detected at: {root_path}"
+        );
         return true;
     }
-    
+
     // Fallback: check for Assets directory indicators
     if has_assets {
-        debug_log!(worktree, "[csharp_roslyn] Likely Unity project (Assets detected) at: {root_path}");
+        debug_log!(
+            worktree,
+            "[csharp_roslyn] Likely Unity project (Assets detected) at: {root_path}"
+        );
         return true;
     }
-    
+
     false
 }
 
@@ -162,33 +175,39 @@ pub fn is_unity_project(worktree: &zed::Worktree) -> bool {
 /// Unity typically generates files in:
 /// - Root directory: *.sln files (usually project name or "Assembly-CSharp.sln")
 /// - Assembly-CSharp.csproj and other .csproj files
-/// 
+///
 /// Returns either a path to existing .sln file or instructions for generation.
 pub fn ensure_unity_project_files(worktree: &zed::Worktree) -> Result<String, String> {
     if !is_unity_project(worktree) {
         return Err("Not a Unity project".to_string());
     }
-    
+
     let root_path = worktree.root_path();
-    
+
     // Try common Unity solution file names
     let common_sln_names = [
         "Assembly-CSharp.sln",
-        "Unity.sln", 
+        "Unity.sln",
         // Also try the directory name as solution name
-        &format!("{}.sln", Path::new(&root_path).file_name().unwrap_or_default().to_string_lossy()),
+        &format!(
+            "{}.sln",
+            Path::new(&root_path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        ),
     ];
-    
+
     for sln_name in &common_sln_names {
         if worktree.read_text_file(sln_name).is_ok() {
             debug_log!(worktree, "[csharp_roslyn] Found Unity solution: {sln_name}");
             return Ok(sln_name.to_string());
         }
     }
-    
+
     // No .sln found - provide helpful instructions
     let instructions = format!(
-        "Unity project detected at '{}' but no .sln files found.\n\
+        "Unity project detected at '{root_path}' but no .sln files found.\n\
         \n\
         To generate project files:\n\
         1. Open the project in Unity Editor\n\
@@ -198,12 +217,11 @@ pub fn ensure_unity_project_files(worktree: &zed::Worktree) -> Result<String, St
         Alternative: Run the helper script from your terminal:\n\
         scripts/generate-unity-projects.sh\n\
         \n\
-        Once generated, the .sln file will be detected automatically.",
-        root_path
+        Once generated, the .sln file will be detected automatically."
     );
-    
+
     debug_log!(worktree, "[csharp_roslyn] {instructions}");
-    
+
     Err(instructions)
 }
 
@@ -221,7 +239,7 @@ pub fn get_unity_omnisharp_config() -> serde_json::Value {
         "FileOptions": {
             "excludeSearchPatterns": [
                 "**/Library/**",
-                "**/Temp/**", 
+                "**/Temp/**",
                 "**/Logs/**",
                 "**/obj/**",
                 "**/bin/**"
@@ -255,7 +273,7 @@ mod tests {
 "#;
         let project_path = std::path::Path::new("TestApp.csproj");
         let project = DotNetProject::from_csproj_text(csproj_content, project_path);
-        
+
         assert_eq!(project.target_framework, "net8.0");
         assert_eq!(project.assembly_name, "TestApp");
         assert!(matches!(project.output_type, OutputType::Exe));
@@ -274,7 +292,7 @@ mod tests {
 "#;
         let project_path = std::path::Path::new("MyLibrary.csproj");
         let project = DotNetProject::from_csproj_text(csproj_content, project_path);
-        
+
         assert_eq!(project.target_framework, "net6.0");
         assert_eq!(project.assembly_name, "MyLibrary");
         assert!(matches!(project.output_type, OutputType::Library));
@@ -290,7 +308,7 @@ mod tests {
 "#;
         let project_path = std::path::Path::new("TestProject.csproj");
         let project = DotNetProject::from_csproj_text(csproj_content, project_path);
-        
+
         assert_eq!(project.target_framework, "net8.0"); // fallback
         assert_eq!(project.assembly_name, "TestProject"); // from filename
         assert!(matches!(project.output_type, OutputType::Library)); // fallback
@@ -308,7 +326,7 @@ mod tests {
 "#;
         let project_path = std::path::Path::new("MultiTargetApp.csproj");
         let project = DotNetProject::from_csproj_text(csproj_content, project_path);
-        
+
         assert_eq!(project.target_framework, "net6.0"); // first one
         assert_eq!(project.assembly_name, "MultiTargetApp");
     }
@@ -316,20 +334,24 @@ mod tests {
     #[test]
     fn test_unity_omnisharp_config_structure() {
         let config = get_unity_omnisharp_config();
-        
+
         // Verify basic structure
         assert!(config.get("RoslynExtensionsOptions").is_some());
         assert!(config.get("FileOptions").is_some());
         assert!(config.get("Plugins").is_some());
-        
+
         // Verify Unity-specific excludes
         let file_options = config.get("FileOptions").unwrap();
-        let excludes = file_options.get("excludeSearchPatterns").unwrap().as_array().unwrap();
-        
+        let excludes = file_options
+            .get("excludeSearchPatterns")
+            .unwrap()
+            .as_array()
+            .unwrap();
+
         assert!(excludes.iter().any(|v| v.as_str() == Some("**/Library/**")));
         assert!(excludes.iter().any(|v| v.as_str() == Some("**/Temp/**")));
         assert!(excludes.iter().any(|v| v.as_str() == Some("**/Logs/**")));
-        
+
         // Verify Unity plugin is enabled
         let plugins = config.get("Plugins").unwrap();
         let unity = plugins.get("Unity").unwrap();

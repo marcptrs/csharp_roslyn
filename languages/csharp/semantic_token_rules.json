@@ -1,0 +1,218 @@
+[
+  {
+    "token_type": "punctuation",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "controlKeyword",
+    "style": ["keyword"]
+  },
+  {
+    "token_type": "operatorOverloaded",
+    "style": ["operator"]
+  },
+  {
+    "token_type": "stringVerbatim",
+    "style": ["string"]
+  },
+  {
+    "token_type": "stringEscapeCharacter",
+    "style": ["string.escape"]
+  },
+  {
+    "token_type": "field",
+    "style": ["property", "variable"]
+  },
+  {
+    "token_type": "constant",
+    "style": ["constant"]
+  },
+  {
+    "token_type": "extensionMethod",
+    "style": ["function.method", "function"]
+  },
+  {
+    "token_type": "recordClass",
+    "style": ["type.class", "type"]
+  },
+  {
+    "token_type": "recordStruct",
+    "style": ["type.struct", "type"]
+  },
+  {
+    "token_type": "delegate",
+    "style": ["type"]
+  },
+  {
+    "token_type": "array",
+    "style": ["type"]
+  },
+  {
+    "token_type": "pointer",
+    "style": ["type"]
+  },
+  {
+    "token_type": "functionPointer",
+    "style": ["type"]
+  },
+  {
+    "token_type": "regexComment",
+    "style": ["comment"]
+  },
+  {
+    "token_type": "regexCharacterClass",
+    "style": ["string.regexp", "string"]
+  },
+  {
+    "token_type": "regexAnchor",
+    "style": ["string.regexp", "string"]
+  },
+  {
+    "token_type": "regexQuantifier",
+    "style": ["string.regexp", "string"]
+  },
+  {
+    "token_type": "regexGrouping",
+    "style": ["string.regexp", "string"]
+  },
+  {
+    "token_type": "regexAlternation",
+    "style": ["string.regexp", "string"]
+  },
+  {
+    "token_type": "regexText",
+    "style": ["string.regexp", "string"]
+  },
+  {
+    "token_type": "regexSelfEscapedCharacter",
+    "style": ["string.escape"]
+  },
+  {
+    "token_type": "regexOtherEscape",
+    "style": ["string.escape"]
+  },
+  {
+    "token_type": "jsonComment",
+    "style": ["comment"]
+  },
+  {
+    "token_type": "jsonNumber",
+    "style": ["number"]
+  },
+  {
+    "token_type": "jsonString",
+    "style": ["string"]
+  },
+  {
+    "token_type": "jsonKeyword",
+    "style": ["keyword"]
+  },
+  {
+    "token_type": "jsonOperator",
+    "style": ["operator"]
+  },
+  {
+    "token_type": "jsonPunctuation",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "jsonArray",
+    "style": ["type"]
+  },
+  {
+    "token_type": "jsonObject",
+    "style": ["type"]
+  },
+  {
+    "token_type": "jsonPropertyName",
+    "style": ["property"]
+  },
+  {
+    "token_type": "jsonConstructorName",
+    "style": ["type"]
+  },
+  {
+    "token_type": "xmlDocCommentAttributeName",
+    "style": ["attribute"]
+  },
+  {
+    "token_type": "xmlDocCommentAttributeQuotes",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "xmlDocCommentAttributeValue",
+    "style": ["string"]
+  },
+  {
+    "token_type": "xmlDocCommentCDataSection",
+    "style": ["string"]
+  },
+  {
+    "token_type": "xmlDocCommentComment",
+    "style": ["comment.documentation", "comment"]
+  },
+  {
+    "token_type": "xmlDocCommentDelimiter",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "xmlDocCommentEntityReference",
+    "style": ["string.escape"]
+  },
+  {
+    "token_type": "xmlDocCommentName",
+    "style": ["tag"]
+  },
+  {
+    "token_type": "xmlDocCommentProcessingInstruction",
+    "style": ["tag"]
+  },
+  {
+    "token_type": "xmlDocCommentText",
+    "style": ["comment.documentation", "comment"]
+  },
+  {
+    "token_type": "xmlLiteralAttributeName",
+    "style": ["attribute"]
+  },
+  {
+    "token_type": "xmlLiteralAttributeQuotes",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "xmlLiteralAttributeValue",
+    "style": ["string"]
+  },
+  {
+    "token_type": "xmlLiteralCDataSection",
+    "style": ["string"]
+  },
+  {
+    "token_type": "xmlLiteralComment",
+    "style": ["comment"]
+  },
+  {
+    "token_type": "xmlLiteralDelimiter",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "xmlLiteralEmbeddedExpression",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "xmlLiteralEntityReference",
+    "style": ["string.escape"]
+  },
+  {
+    "token_type": "xmlLiteralName",
+    "style": ["tag"]
+  },
+  {
+    "token_type": "xmlLiteralProcessingInstruction",
+    "style": ["tag"]
+  },
+  {
+    "token_type": "xmlLiteralText",
+    "style": ["string"]
+  }
+]

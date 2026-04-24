@@ -36,3 +36,6 @@ roslyn-wrapper.exe
 #
 
 test_project/
+
+# Minni - local codebase index (https://github.com/youruser/minni)
+.minni/

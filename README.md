@@ -1,57 +1,150 @@
 # C# Roslyn Extension for Zed
 
-A Zed editor extension providing C# language support via OmniSharp-Roslyn and netcoredbg debugger.
+A Zed extension for C# with:
+
+- **Roslyn language server** as the preferred backend
+- **OmniSharp** as a compatibility fallback
+- **netcoredbg** for debugging
+
+## Current backend strategy
+
+This extension supports both language servers:
+
+- **Roslyn** (`roslyn-language-server`) is preferred when a **.NET 10+ runtime** is available.
+- **OmniSharp** is selected automatically for Unity projects or when .NET 10+ is not detected.
+- A configured custom Roslyn binary is always honored.
 
 ## Features
 
-- Code completion, go-to-definition, find references, rename symbol
-- Diagnostics and code analysis
-- Solution file detection (.sln, .slnx, .slnf)
-- MSBuild integration
-- **Unity project support** - automatic detection and configuration
-- Debugging support via netcoredbg
-- Auto-downloads OmniSharp-Roslyn and netcoredbg on first use
-- Supports custom OmniSharp installations via PATH
+- Completion, hover, go to definition, find references, rename
+- Diagnostics and analyzers
+- Roslyn workspace configuration support
+- Unity-oriented OmniSharp fallback
+- Debugging via `netcoredbg`
+- Automatic download of Roslyn/OmniSharp/netcoredbg when needed (platform-aware source selection)
+- Support for custom language server binaries in Zed settings
 
-### Known Limitations
+## Semantic highlighting
 
-- Go-to-definition on BCL (Base Class Library) types currently not working
-- Some cross-project navigation may be limited
+Zed now supports semantic tokens. For C#, the main requirement is that the active language server advertises semantic token support and that Zed has semantic tokens enabled.
+
+This extension also ships default semantic token mappings for Roslyn custom token types such as regex, JSON, XML doc, punctuation, verbatim strings, and extension methods.
+
+Recommended setting:
+
+```json
+{
+  "languages": {
+    "CSharp": {
+      "semantic_tokens": "full"
+    }
+  }
+}
+```
+
+Use `"combined"` if you want tree-sitter highlighting with semantic overlays.
+
+Notes:
+
+- **Roslyn** is the preferred backend for semantic highlighting work.
+- **OmniSharp** remains a compatibility path and may not match Roslyn's behavior.
+- If highlighting does not update after changing this setting, run `lsp: restart language servers`.
 
 ## Installation
 
-This extension is currently in development and **not available in the Zed extension registry**.
-
-To install:
+This extension is intended for local development installation.
 
 1. Clone this repository
-2. Open Zed and run: `zed: extensions: install dev extension`
-3. Select the cloned `csharp_roslyn` directory
-4. Restart Zed
+2. Open Zed
+3. Run `zed: extensions: install dev extension`
+4. Select the cloned `csharp_roslyn` directory
+5. Restart Zed
 
-## Setup
+## Configuration
 
-### Basic Usage
+### Select language server priority
 
-The extension works out of the box! Simply open a C# project with a `.sln` file and start coding.
-
-### Unity Projects
-
-For Unity projects, see [Unity Support Guide](UNITY-SUPPORT.md) for setup instructions.
-
-**Quick start:**
-1. Generate project files in Unity: `Edit → Preferences → External Script Editor` → "Regenerate project files"
-2. Open Unity project folder in Zed
-3. Extension automatically detects Unity projects and configures OmniSharp appropriately
-
-### Optional: Specify Solution Path
-
-If auto-detection doesn't find your solution file, specify it in your Zed settings (`Cmd+,` / `Ctrl+,`):
+You can configure language-server priority for C#:
 
 ```json
 {
-  "language_servers": {
-    "omnisharp-roslyn": {
+  "languages": {
+    "CSharp": {
+      "language_servers": ["roslyn", "!omnisharp", "..."]
+    }
+  }
+}
+```
+
+To prefer OmniSharp explicitly:
+
+```json
+{
+  "languages": {
+    "CSharp": {
+      "language_servers": ["omnisharp", "!roslyn", "..."]
+    }
+  }
+}
+```
+
+Even when `roslyn` is preferred, this extension may still fall back to OmniSharp automatically when Roslyn is not usable on the host.
+
+### Roslyn settings
+
+Roslyn configuration goes under `lsp.roslyn.settings`:
+
+```json
+{
+  "lsp": {
+    "roslyn": {
+      "settings": {
+        "csharp|completion": {
+          "dotnet_show_completion_items_from_unimported_namespaces": true
+        },
+        "csharp|navigation": {
+          "dotnet_navigate_to_decompiled_sources": true,
+          "dotnet_navigate_to_source_link_and_embedded_sources": true
+        },
+        "csharp|inlay_hints": {
+          "dotnet_enable_inlay_hints_for_parameters": true,
+          "csharp_enable_inlay_hints_for_types": true
+        }
+      }
+    }
+  }
+}
+```
+
+### Custom Roslyn binary
+
+If you installed `roslyn-language-server` yourself, you can point Zed to it:
+
+```json
+{
+  "lsp": {
+    "roslyn": {
+      "binary": {
+        "path": "/path/to/roslyn-language-server",
+        "arguments": ["--stdio", "--autoLoadProjects"]
+      }
+    }
+  }
+}
+```
+
+This is useful if you want to manage the Roslyn server outside the extension.
+
+### OmniSharp settings
+
+OmniSharp configuration goes under `lsp.omnisharp`.
+
+To set a solution path:
+
+```json
+{
+  "lsp": {
+    "omnisharp": {
       "initialization_options": {
         "solution": "/absolute/path/to/your/solution.sln"
       }
@@ -60,28 +153,38 @@ If auto-detection doesn't find your solution file, specify it in your Zed settin
 }
 ```
 
-### Optional: Use Custom OmniSharp Installation
+To use a custom OmniSharp binary:
 
 ```json
 {
-  "language_servers": {
-    "omnisharp-roslyn": {
-      "enabled": true,
-      "initialization_options": {
-        "solution": "/absolute/path/to/your/solution.sln"
+  "lsp": {
+    "omnisharp": {
+      "binary": {
+        "path": "/path/to/OmniSharp",
+        "arguments": ["-lsp"]
       }
     }
   }
 }
 ```
+
+### Unity projects
+
+Unity currently routes through OmniSharp.
+
+See [UNITY-SUPPORT.md](UNITY-SUPPORT.md) for details.
 
 ## Debugging
 
-The extension supports automatic debug configuration generation from tasks or manual configuration.
+The extension provides `netcoredbg` support.
 
-### Option 1: Tasks with Auto-Generated Debug Config (Recommended)
+Notes:
+- Linux, macOS x64, and Windows use official Samsung `netcoredbg` releases.
+- macOS arm64 uses prebuilt arm64 assets from `marcptrs/netcoredbg` (upstream-style tag naming).
 
-Create `.zed/tasks.json` in your project root:
+### Task-based debugging
+
+Create `.zed/tasks.json`:
 
 ```json
 [
@@ -90,21 +193,15 @@ Create `.zed/tasks.json` in your project root:
     "command": "dotnet",
     "args": ["run", "--project", "src/MyApp/MyApp.csproj"],
     "use_new_terminal": false
-  },
-  {
-    "label": "Build MyApp",
-    "command": "dotnet",
-    "args": ["build", "src/MyApp/MyApp.csproj"],
-    "use_new_terminal": false
   }
 ]
 ```
 
-The extension automatically generates debug configurations from your `dotnet run` tasks. Simply select the task from the debug panel and start debugging!
+The extension can derive a debug scenario directly from `dotnet run` tasks.
 
-### Option 2: Manual Debug Configuration
+### Manual debug configuration
 
-Create `.zed/debug.json` in your project root:
+Create `.zed/debug.json`:
 
 ```json
 [
@@ -112,7 +209,7 @@ Create `.zed/debug.json` in your project root:
     "label": "Debug MyApp",
     "adapter": "netcoredbg",
     "request": "launch",
-    "program": "$ZED_WORKTREE_ROOT/src/MyApp/bin/Debug/{targetFramework}/MyApp.dll",
+    "program": "$ZED_WORKTREE_ROOT/src/MyApp/bin/Debug/$TARGET_FRAMEWORK/MyApp.dll",
     "args": [],
     "cwd": "$ZED_WORKTREE_ROOT",
     "stopAtEntry": false,
@@ -121,43 +218,21 @@ Create `.zed/debug.json` in your project root:
 ]
 ```
 
-**Note**: The `{targetFramework}` placeholder (e.g., `net8.0`, `net9.0`) is automatically detected from your `.csproj` file at debug time.
-
-### Debug Configuration Options
-
-- `program`: Path to the .NET DLL to debug (use `$ZED_WORKTREE_ROOT` for workspace root)
-- `args`: Array of command-line arguments
-- `cwd`: Working directory
-- `env`: Environment variables object
-- `stopAtEntry`: Break at program entry point (default: false)
-- `console`: `"internalConsole"`, `"integratedTerminal"`, or `"externalTerminal"`
-
-### Example: Debug with Arguments
-
-```json
-{
-  "label": "Debug with Args",
-  "adapter": "netcoredbg",
-  "request": "launch",
-  "program": "$ZED_WORKTREE_ROOT/bin/Debug/{targetFramework}/MyApp.dll",
-  "args": ["--verbose", "input.txt"],
-  "env": {
-    "ASPNETCORE_ENVIRONMENT": "Development"
-  },
-  "cwd": "$ZED_WORKTREE_ROOT"
-}
-```
+`$TARGET_FRAMEWORK` is resolved from the corresponding `.csproj` when possible.
 
 ## Troubleshooting
 
-### Debug Logging
-
-For detailed troubleshooting information, enable debug logging in your Zed settings:
+### Enable debug logging
 
 ```json
 {
   "lsp": {
-    "csharp_roslyn": {
+    "roslyn": {
+      "settings": {
+        "enable_debug_logging": true
+      }
+    },
+    "omnisharp": {
       "initialization_options": {
         "enable_debug_logging": true
       }
@@ -166,56 +241,76 @@ For detailed troubleshooting information, enable debug logging in your Zed setti
 }
 ```
 
-Debug messages appear in the terminal when running Zed with `zed . --foreground`. Extension logs do not appear in Zed's main log file due to WASM sandbox limitations.
+Logs appear in the terminal when running Zed in the foreground.
 
-Messages are prefixed with `[csharp_roslyn]` and show:
-- Unity project detection status
-- Solution file discovery attempts  
-- OmniSharp download progress
-- Debugger setup steps
-- Configuration decisions
+### Roslyn does not start
 
-### Language Server Won't Start
+Common causes:
 
-- Extension auto-downloads OmniSharp-Roslyn on first use
-- Cache location: `~/.cache/zed/extensions/csharp_roslyn/cache/` (Linux/macOS) or `%LOCALAPPDATA%\Zed\extensions\csharp_roslyn\cache\` (Windows)
-- Enable debug logging (above) for detailed diagnostics
-- Check terminal output when running with `zed . --foreground` for debug messages
-- Manually download from: https://github.com/OmniSharp/omnisharp-roslyn/releases
+- No **.NET 10+ runtime** is installed.
+- A Unity project was detected, so the extension intentionally fell back to OmniSharp.
+- The custom Roslyn binary path is invalid.
 
-### Debugger Issues
+In these cases, the extension should usually fall back to OmniSharp automatically.
+When debug logging is enabled, the extension now logs the backend decision explicitly.
 
-- Extension auto-downloads netcoredbg on first use
-- Verify `program` path exists and build completed successfully
-- Ensure Debug configuration (not Release)
-- Enable debug logging (above) for detailed diagnostics
-- Check logs: `Help → View Logs`
+### Semantic highlighting not appearing
 
-### No Solution File Detected
+- Set `semantic_tokens` to `"full"` (or `"combined"`) for `CSharp`.
+- Run `lsp: restart language servers` after changing the setting.
+- Prefer Roslyn when comparing backend behavior.
 
-- Place `.sln` file in workspace root, or
-- Manually specify solution path in settings (see Setup section above)
+### Debugger fails to launch
+
+If you see startup errors (for example `configurationDone` failures), try:
+
+- Ensure `program` points to an existing built DLL.
+- Clear debugger cache so the adapter is re-downloaded:
+  - `~/Library/Application Support/Zed/extensions/work/csharp_roslyn/cache/netcoredbg`
+- Restart Zed and retry.
+
+### No solution detected for OmniSharp
+
+The extension first checks `lsp.omnisharp.initialization_options.solution`, then tries a simple heuristic for `<workspace-name>.sln`, `.slnx`, or `.slnf` in the workspace root.
+
+If that still does not work, set it explicitly:
+
+```json
+{
+  "lsp": {
+    "omnisharp": {
+      "initialization_options": {
+        "solution": "/absolute/path/to/project.sln"
+      }
+    }
+  }
+}
+```
 
 ## Development
 
-### Building
+Build:
 
 ```bash
-cargo build --target wasm32-wasip2 --release
+cargo build --target wasm32-wasip2
 ```
 
-### Installing Dev Build
+Test:
 
 ```bash
-cp target/wasm32-wasip2/release/csharp_roslyn.wasm ~/Library/Application\ Support/Zed/extensions/installed/csharp_roslyn/extension.wasm
+cargo test
 ```
 
-## License
+Install dev build:
 
-MIT License
+```bash
+cp target/wasm32-wasip2/debug/csharp_roslyn.wasm ~/Library/Application\ Support/Zed/extensions/installed/csharp_roslyn/extension.wasm
+```
 
 ## Links
 
-- **OmniSharp-Roslyn**: https://github.com/OmniSharp/omnisharp-roslyn
-- **netcoredbg**: https://github.com/Samsung/netcoredbg
-- **Issues**: https://github.com/marcptrs/csharp-roslyn/issues
+- Roslyn language server: https://raw.githubusercontent.com/dotnet/roslyn/refs/heads/main/src/LanguageServer/Microsoft.CodeAnalysis.LanguageServer/README.md
+- Zed C# language docs: ../zed/docs/src/languages/csharp.md
+- OmniSharp: https://github.com/OmniSharp/omnisharp-roslyn
+- netcoredbg (official): https://github.com/Samsung/netcoredbg
+- netcoredbg (macOS arm64 release pipeline): https://github.com/marcptrs/netcoredbg
